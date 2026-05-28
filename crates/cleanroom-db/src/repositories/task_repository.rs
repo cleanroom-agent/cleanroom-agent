@@ -454,3 +454,209 @@ impl TaskRepository {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Database;
+    use uuid::Uuid;
+
+    fn create_test_task(task_type: TaskType) -> Task {
+        Task {
+            task_id: Uuid::new_v4().to_string(),
+            task_type,
+            status: TaskStatus::Pending,
+            priority: 5,
+            input_json: r#"{"test": true}"#.to_string(),
+            output_json: None,
+            error_message: None,
+            assigned_to: None,
+            progress: 0.0,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            started_at: None,
+            completed_at: None,
+            retry_count: 0,
+            max_retries: 3,
+            last_heartbeat: None,
+            dependencies_json: "[]".to_string(),
+            version: 1,
+        }
+    }
+
+    fn setup() -> (Database, TaskRepository) {
+        let db = Database::in_memory().unwrap();
+        let repo = TaskRepository::new(db.connection_arc());
+        (db, repo)
+    }
+
+    #[test]
+    fn test_create_and_get_task() {
+        let (_, repo) = setup();
+        let task = create_test_task(TaskType::RepoAnalyze);
+        repo.create(&task).unwrap();
+
+        let fetched = repo.get(&task.task_id).unwrap();
+        assert_eq!(fetched.task_id, task.task_id);
+        assert_eq!(fetched.task_type, TaskType::RepoAnalyze);
+        assert_eq!(fetched.status, TaskStatus::Pending);
+        assert_eq!(fetched.priority, 5);
+        assert_eq!(fetched.input_json, r#"{"test": true}"#);
+    }
+
+    #[test]
+    fn test_get_non_existent_task() {
+        let (_, repo) = setup();
+        let result = repo.get("non-existent-id");
+        assert!(result.is_err());
+        match result {
+            Err(DbError::NotFound { resource, field: _, value }) => {
+                assert_eq!(resource, "task");
+                assert_eq!(value, "non-existent-id");
+            }
+            _ => panic!("Expected NotFound error"),
+        }
+    }
+
+    #[test]
+    fn test_update_status() {
+        let (_, repo) = setup();
+        let task = create_test_task(TaskType::ExtractDataModel);
+        repo.create(&task).unwrap();
+
+        repo.update_status(&task.task_id, TaskStatus::InProgress).unwrap();
+        let fetched = repo.get(&task.task_id).unwrap();
+        assert_eq!(fetched.status, TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn test_update_progress() {
+        let (_, repo) = setup();
+        let task = create_test_task(TaskType::ExtractArchitecture);
+        repo.create(&task).unwrap();
+
+        repo.update_progress(&task.task_id, 0.5).unwrap();
+        let fetched = repo.get(&task.task_id).unwrap();
+        assert!((fetched.progress - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_complete_task() {
+        let (_, repo) = setup();
+        let task = create_test_task(TaskType::ExtractModule);
+        repo.create(&task).unwrap();
+
+        repo.complete(&task.task_id, r#"{"done": true}"#).unwrap();
+        let fetched = repo.get(&task.task_id).unwrap();
+        assert_eq!(fetched.status, TaskStatus::Completed);
+        assert_eq!(fetched.output_json.unwrap(), r#"{"done": true}"#);
+    }
+
+    #[test]
+    fn test_delete_task() {
+        let (_, repo) = setup();
+        let task = create_test_task(TaskType::ImportSdef);
+        repo.create(&task).unwrap();
+
+        repo.delete(&task.task_id).unwrap();
+        let result = repo.get(&task.task_id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_heartbeat() {
+        let (_, repo) = setup();
+        let task = create_test_task(TaskType::ExportSdef);
+        repo.create(&task).unwrap();
+
+        repo.heartbeat(&task.task_id).unwrap();
+        let fetched = repo.get(&task.task_id).unwrap();
+        assert!(fetched.last_heartbeat.is_some());
+    }
+
+    #[test]
+    fn test_claim_task_atomic() {
+        let (_, repo) = setup();
+        let task = create_test_task(TaskType::RepoAnalyze);
+        repo.create(&task).unwrap();
+
+        let claimed = repo.claim("agent-1").unwrap();
+        assert!(claimed.is_some());
+        assert_eq!(claimed.unwrap().task_id, task.task_id);
+
+        // Second claim should return None (no pending tasks)
+        let second_claim = repo.claim("agent-2").unwrap();
+        assert!(second_claim.is_none());
+    }
+
+    #[test]
+    fn test_list_tasks_with_filters() {
+        let (_, repo) = setup();
+
+        let task1 = create_test_task(TaskType::RepoAnalyze);
+        repo.create(&task1).unwrap();
+
+        let mut task2 = create_test_task(TaskType::ExtractDataModel);
+        task2.task_id = Uuid::new_v4().to_string();
+        task2.status = TaskStatus::Completed;
+        repo.create(&task2).unwrap();
+
+        // List all
+        let all = repo.list(None, None, None).unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Filter by status
+        let completed = repo.list(Some(TaskStatus::Completed), None, None).unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].task_type, TaskType::ExtractDataModel);
+    }
+
+    #[test]
+    fn test_task_status_transitions() {
+        let (_, repo) = setup();
+        let task = create_test_task(TaskType::RepoAnalyze);
+        repo.create(&task).unwrap();
+
+        // pending -> in_progress (valid)
+        repo.update_status(&task.task_id, TaskStatus::InProgress).unwrap();
+
+        // in_progress -> completed (valid)
+        repo.update_status(&task.task_id, TaskStatus::Completed).unwrap();
+
+        // completed -> anything (invalid, trigger should block)
+        let result = repo.update_status(&task.task_id, TaskStatus::Pending);
+        // Should fail because trigger blocks completed -> other status
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_progress_cannot_decrease() {
+        let (_, repo) = setup();
+        let task = create_test_task(TaskType::RepoAnalyze);
+        repo.create(&task).unwrap();
+
+        repo.update_progress(&task.task_id, 0.5).unwrap();
+
+        // Progress decreases should be blocked by trigger
+        let result = repo.update_progress(&task.task_id, 0.3);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_claim_task_priority_order() {
+        let (_, repo) = setup();
+
+        let mut low_priority = create_test_task(TaskType::RepoAnalyze);
+        low_priority.priority = 1;
+        repo.create(&low_priority).unwrap();
+
+        let mut high_priority = create_test_task(TaskType::ExtractDataModel);
+        high_priority.task_id = Uuid::new_v4().to_string();
+        high_priority.priority = 10;
+        repo.create(&high_priority).unwrap();
+
+        // Should claim highest priority first
+        let claimed = repo.claim("agent-1").unwrap().unwrap();
+        assert_eq!(claimed.priority, 10);
+        assert_eq!(claimed.task_type, TaskType::ExtractDataModel);
+    }
+}

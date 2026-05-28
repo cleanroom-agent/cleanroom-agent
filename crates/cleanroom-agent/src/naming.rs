@@ -48,6 +48,7 @@ impl Language {
         }
     }
 
+    #[allow(dead_code)]
     pub fn module_keyword(&self) -> Option<&'static str> {
         match self {
             Self::Rust => Some("mod"),
@@ -153,5 +154,94 @@ impl DeterministicNames {
 impl Default for DeterministicNames {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup() -> DeterministicNames {
+        DeterministicNames::new()
+    }
+
+    #[test]
+    fn test_snake_case_basic() {
+        let names = setup();
+        assert_eq!(names.convert("UserName", NameStyle::SnakeCase), "user_name");
+        assert_eq!(names.convert("userName", NameStyle::SnakeCase), "user_name");
+        assert_eq!(names.convert("simple", NameStyle::SnakeCase), "simple");
+    }
+
+    #[test]
+    fn test_camel_case_basic() {
+        let names = setup();
+        assert_eq!(names.convert("user_name", NameStyle::CamelCase), "userName");
+        assert_eq!(names.convert("UserName", NameStyle::CamelCase), "userName");
+    }
+
+    #[test]
+    fn test_pascal_case_basic() {
+        let names = setup();
+        assert_eq!(names.convert("user_name", NameStyle::PascalCase), "UserName");
+        assert_eq!(names.convert("simple", NameStyle::PascalCase), "Simple");
+    }
+
+    #[test]
+    fn test_upper_snake_case_basic() {
+        let names = setup();
+        assert_eq!(names.convert("userName", NameStyle::UpperSnakeCase), "USER_NAME");
+        assert_eq!(names.convert("user_name", NameStyle::UpperSnakeCase), "USER_NAME");
+    }
+
+    #[test]
+    fn test_rust_naming() {
+        let names = setup();
+        assert_eq!(names.convert_for_language("UserName", Language::Rust), "user_name");
+        assert_eq!(names.convert_for_language("MyClass", Language::Rust), "my_class");
+    }
+
+    #[test]
+    fn test_typescript_naming() {
+        let names = setup();
+        assert_eq!(names.convert_for_language("user_name", Language::TypeScript), "userName");
+    }
+
+    #[test]
+    fn test_go_naming() {
+        let names = setup();
+        assert_eq!(names.convert_for_language("user_name", Language::Go), "UserName");
+    }
+
+    #[test]
+    fn test_python_naming() {
+        let names = setup();
+        assert_eq!(names.convert_for_language("UserName", Language::Python), "user_name");
+    }
+
+    #[test]
+    fn test_all_languages_have_styles() {
+        let names = setup();
+        for lang in &[Language::Rust, Language::Python, Language::TypeScript,
+                      Language::JavaScript, Language::Java, Language::Go, Language::CSharp] {
+            let result = names.convert_for_language("TestName", *lang);
+            assert!(!result.is_empty(), "Language {:?} produced empty result", lang);
+        }
+    }
+
+    #[test]
+    fn test_from_str() {
+        assert_eq!(Language::from_str("rust"), Some(Language::Rust));
+        assert_eq!(Language::from_str("typescript"), Some(Language::TypeScript));
+        assert_eq!(Language::from_str("ts"), Some(Language::TypeScript));
+        assert_eq!(Language::from_str("python"), Some(Language::Python));
+        assert_eq!(Language::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_empty_name() {
+        let names = setup();
+        assert_eq!(names.convert("", NameStyle::SnakeCase), "");
+        assert_eq!(names.convert("", NameStyle::PascalCase), "");
     }
 }

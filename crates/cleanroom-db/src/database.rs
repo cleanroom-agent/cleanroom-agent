@@ -105,7 +105,11 @@ impl Database {
             conn: Arc::new(Mutex::new(conn)),
         };
         db.configure()?;
-        db.run_migrations()?;
+        // Apply embedded schema directly for tests
+        let conn = db.conn.lock().unwrap();
+        conn.execute_batch(crate::embedded_schema::INITIAL_SCHEMA_SQL)
+            .map_err(|e| DbError::MigrationFailed(e.to_string()))?;
+        drop(conn);
         Ok(db)
     }
 

@@ -1,17 +1,15 @@
 //! cleanroom-mcp — MCP server for Cleanroom Agent.
-//!
-//! Uses the official MCP Rust SDK (`rmcp`):
-//! <https://github.com/modelcontextprotocol/rust-sdk>
 
 use std::path::Path;
 use std::sync::Arc;
 
 use rmcp::{
-    model::{ServerInfo, ServerCapabilities},
+    model::{ServerInfo, ServerCapabilities, Implementation},
     ServerHandler, serve_server, ErrorData,
 };
+use tracing::info;
 
-use cleanroom_db::{Database, DbError};
+use cleanroom_db::Database;
 
 pub mod tools;
 
@@ -24,8 +22,9 @@ pub struct CleanroomMcpServer {
 
 impl CleanroomMcpServer {
     /// Create a new MCP server instance.
-    pub fn new(db_path: &Path) -> Result<Self, DbError> {
-        let db = Database::open(db_path)?;
+    pub fn new(db_path: &Path) -> Result<Self, ErrorData> {
+        let db = Database::open(db_path)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         Ok(Self {
             db: Arc::new(db),
         })
@@ -43,7 +42,7 @@ impl CleanroomMcpServer {
 impl ServerHandler for CleanroomMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(rmcp::model::Implementation::new("cleanroom-agent", env!("CARGO_PKG_VERSION")))
-            .with_instructions("S.DEF intelligent agent system for software definition exchange")
+            .with_server_info(Implementation::new("cleanroom-agent", env!("CARGO_PKG_VERSION")))
+            .with_instructions("S.DEF intelligent agent system")
     }
 }
