@@ -466,6 +466,7 @@ dependencies = [
  "clap",
  "cleanroom-agent",
  "cleanroom-db",
+ "cleanroom-i18n",
  "cleanroom-mcp",
  "indicatif",
  "rusqlite",
@@ -492,6 +493,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cleanroom-i18n"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "cleanroom-lsp"
 version = "0.1.0"
 dependencies = [
@@ -514,6 +522,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "cleanroom-db",
+ "cleanroom-i18n",
  "rmcp",
  "rmcp-macros",
  "rusqlite",

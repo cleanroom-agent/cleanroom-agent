@@ -8,6 +8,7 @@ license.workspace = true
 cleanroom-agent = { path = "../cleanroom-agent" }
 cleanroom-db = { path = "../cleanroom-db" }
 cleanroom-mcp = { path = "../cleanroom-mcp" }
+cleanroom-i18n = { path = "../cleanroom-i18n" }
 sdef-core = { path = "../sdef-core" }
 clap.workspace = true
 tokio.workspace = true

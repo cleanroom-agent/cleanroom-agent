@@ -24,6 +24,10 @@ use cleanroom_db::{
 };
 use cleanroom_db::repositories::{CheckpointRepository, Checkpoint};
 
+fn tr(key: &str) -> String {
+    cleanroom_i18n::global().translate(key)
+}
+
 pub mod tools;
 
 /// The Cleanroom MCP server.
@@ -507,14 +511,15 @@ impl CleanroomMcpServer {
     }
 }
 
-// ============ Tool Definitions ============
+// ============ Tool Definitions (i18n) ============
 
 fn make_tool<T: rmcp::schemars::JsonSchema>(
     name: &'static str,
-    description: &'static str,
+    desc_key: &str,
     read_only: bool,
 ) -> Tool {
     let schema = CleanroomMcpServer::schema_for::<T>();
+    let description = tr(desc_key);
     Tool::new(name, description, schema)
         .with_annotations(ToolAnnotations::new().read_only(read_only))
 }
@@ -526,46 +531,46 @@ fn all_tools() -> Vec<Tool> {
     use tools::import_export_tools::*;
 
     vec![
-        // Task Management
-        make_tool::<CreateTaskParams>("create_task", "创建新的分析或生成任务", false),
-        make_tool::<ClaimTaskParams>("claim_task", "原子获取下一个待处理任务", false),
-        make_tool::<UpdateProgressParams>("update_task_progress", "更新任务进度(0.0~1.0)", false),
-        make_tool::<CompleteTaskParams>("complete_task", "标记任务完成并提交输出", false),
-        make_tool::<FailTaskParams>("fail_task", "标记任务失败并记录错误", false),
-        make_tool::<HeartbeatParams>("send_heartbeat", "发送任务心跳信号", false),
-        make_tool::<CreateTaskParams>("get_task", "根据ID获取任务详情", true),
-        make_tool::<ListTasksParams>("list_tasks", "列出任务(支持按状态/类型/责任人过滤)", true),
+        // Task Management (keys: mcp.xxx)
+        make_tool::<CreateTaskParams>("create_task", "mcp.create_task", false),
+        make_tool::<ClaimTaskParams>("claim_task", "mcp.claim_task", false),
+        make_tool::<UpdateProgressParams>("update_task_progress", "mcp.update_task_progress", false),
+        make_tool::<CompleteTaskParams>("complete_task", "mcp.complete_task", false),
+        make_tool::<FailTaskParams>("fail_task", "mcp.fail_task", false),
+        make_tool::<HeartbeatParams>("send_heartbeat", "mcp.send_heartbeat", false),
+        make_tool::<CreateTaskParams>("get_task", "mcp.get_task", true),
+        make_tool::<ListTasksParams>("list_tasks", "mcp.list_tasks", true),
 
         // S.DEF Query
-        make_tool::<GetDataModelParams>("get_data_model", "获取数据模型(含属性)", true),
-        make_tool::<GetContractParams>("get_contract", "获取契约(接口/类/API)", true),
-        make_tool::<ListDocumentsParams>("list_documents", "列出所有S.DEF文档", true),
-        make_tool::<SearchSdefParams>("search_sdef", "FTS5全文搜索S.DEF文档", true),
-        make_tool::<GetDataModelParams>("get_dependency_graph", "获取模块依赖图", true),
+        make_tool::<GetDataModelParams>("get_data_model", "mcp.get_data_model", true),
+        make_tool::<GetContractParams>("get_contract", "mcp.get_contract", true),
+        make_tool::<ListDocumentsParams>("list_documents", "mcp.list_documents", true),
+        make_tool::<SearchSdefParams>("search_sdef", "mcp.search_sdef", true),
+        make_tool::<GetDataModelParams>("get_dependency_graph", "mcp.get_dependency_graph", true),
 
         // Naming Service
-        make_tool::<ResolveNameParams>("resolve_name", "解析S.DEF URI → 代码名称", true),
-        make_tool::<BatchResolveParams>("batch_resolve_names", "批量解析URI → 名称", true),
-        make_tool::<ListSymbolsParams>("list_symbols", "列出已注册符号(按语言/类型过滤)", true),
-        make_tool::<RegisterCustomNameParams>("register_custom_name", "手动注册自定义名称", false),
+        make_tool::<ResolveNameParams>("resolve_name", "mcp.resolve_name", true),
+        make_tool::<BatchResolveParams>("batch_resolve_names", "mcp.batch_resolve_names", true),
+        make_tool::<ListSymbolsParams>("list_symbols", "mcp.list_symbols", true),
+        make_tool::<RegisterCustomNameParams>("register_custom_name", "mcp.register_custom_name", false),
 
         // Import/Export
-        make_tool::<ExportSdefParams>("export_sdef", "导出完整S.DEF(json/yaml)", true),
-        make_tool::<ImportSdefParams>("import_sdef", "从JSON导入S.DEF到数据库", false),
+        make_tool::<ExportSdefParams>("export_sdef", "mcp.export_sdef", true),
+        make_tool::<ImportSdefParams>("import_sdef", "mcp.import_sdef", false),
 
         // Checkpoint
-        make_tool::<CheckpointParams>("create_checkpoint", "创建全局检查点", false),
-        make_tool::<CheckpointParams>("list_checkpoints", "列出文档的检查点", true),
-        make_tool::<CheckpointIdParams>("restore_checkpoint", "恢复检查点", false),
+        make_tool::<CheckpointParams>("create_checkpoint", "mcp.create_checkpoint", false),
+        make_tool::<CheckpointParams>("list_checkpoints", "mcp.list_checkpoints", true),
+        make_tool::<CheckpointIdParams>("restore_checkpoint", "mcp.restore_checkpoint", false),
 
         // Transaction
-        make_tool::<CreateTaskParams>("begin_transaction", "开始数据库事务", false),
-        make_tool::<CreateTaskParams>("commit_transaction", "提交事务", false),
-        make_tool::<CreateTaskParams>("rollback_transaction", "回滚事务", false),
+        make_tool::<CreateTaskParams>("begin_transaction", "mcp.begin_transaction", false),
+        make_tool::<CreateTaskParams>("commit_transaction", "mcp.commit_transaction", false),
+        make_tool::<CreateTaskParams>("rollback_transaction", "mcp.rollback_transaction", false),
 
         // Consistency
-        make_tool::<ConsistencyCheckParams>("check_consistency", "运行一致性检查", true),
-        make_tool::<FingerprintParams>("compute_fingerprints", "重新计算并存储指纹", false),
+        make_tool::<ConsistencyCheckParams>("check_consistency", "mcp.check_consistency", true),
+        make_tool::<FingerprintParams>("compute_fingerprints", "mcp.compute_fingerprints", false),
     ]
 }
 
@@ -575,7 +580,7 @@ impl ServerHandler for CleanroomMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("cleanroom-agent", env!("CARGO_PKG_VERSION")))
-            .with_instructions("S.DEF intelligent agent system. Use tools to manage tasks, query S.DEF definitions, resolve names, and manage consistency.")
+            .with_instructions(tr("mcp.server_instructions"))
     }
 
     fn list_tools(
@@ -607,7 +612,8 @@ impl ServerHandler for CleanroomMcpServer {
                     Ok(ctr)
                 }
                 Err(err_msg) => {
-                    let content = Content::text(format!("Error: {}", err_msg));
+                    let prefix = tr("mcp.error_prefix");
+                    let content = Content::text(format!("{} {}", prefix, err_msg));
                     let mut ctr = CallToolResult::default();
                     ctr.content = vec![content];
                     ctr.is_error = Some(true);

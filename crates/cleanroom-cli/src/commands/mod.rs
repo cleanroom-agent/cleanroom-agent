@@ -1,4 +1,4 @@
-//! CLI commands.
+//! CLI commands — all user-facing messages use i18n via `tr_global!()`.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use cleanroom_agent::{
     CompatibilityResolver, CompletenessValidator, format_report,
 };
 use cleanroom_db::{Database, TaskRepository, TaskStatus, TaskType};
+use cleanroom_i18n::tr_global;
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -49,11 +50,10 @@ pub enum Commands {
 
     /// Resume workflow from checkpoint
     Resume {
-        /// Document name to resume
         #[arg(long)]
         document: String,
         /// Resume failed tasks too
-        #[arg(long, default_value = "false")]
+        #[arg(long)]
         retry_failed: bool,
     },
 
@@ -63,22 +63,18 @@ pub enum Commands {
         check_type: String,
     },
 
-    /// Export S.DEF document from database to JSON file
+    /// Export document
     Export {
-        /// Document name to export
         #[arg(long)]
         document: String,
-        /// Output JSON file path
         #[arg(long, default_value = "./sdef-output/sdef.json")]
         output: String,
-        /// Output format: json (default) or yaml
         #[arg(long, default_value = "json")]
         format: String,
     },
 
-    /// Import S.DEF from JSON file into database
+    /// Import document
     Import {
-        /// S.DEF JSON file to import
         #[arg(long)]
         file: String,
     },
@@ -127,7 +123,7 @@ fn produce_command(repo: &str, output: &str, db_path: &str, name: Option<String>
             .unwrap_or_else(|| "unnamed".to_string())
     });
 
-    let rt = Runtime::new().context("Failed to create Tokio runtime")?;
+    let rt = Runtime::new().context(tr_global!("cli.error_runtime"))?;
     rt.block_on(async {
         let config = OrchestratorConfig {
             repo_path: Path::new(repo).to_path_buf(),
@@ -136,27 +132,27 @@ fn produce_command(repo: &str, output: &str, db_path: &str, name: Option<String>
             checkpoint_interval_secs: 600,
             agent_idle_timeout_secs: 300,
         };
-        let orchestrator = Orchestrator::new(config).context("Failed to create orchestrator")?;
+        let orchestrator = Orchestrator::new(config).context(tr_global!("cli.error_orchestrator"))?;
         orchestrator.start_workflow().await?;
 
         let producer = ProducerAgent::new(ProducerConfig::default(), orchestrator.db().clone());
         while let Ok(Some(task)) = producer.process_next_task().await {
-            println!("Processed task: {}", task.task_id);
+            println!("{}", tr_global!("cli.produce_processed", task.task_id));
         }
-        println!("Production completed for '{}'", project_name);
+        println!("{}", tr_global!("cli.produce_complete", project_name));
         Ok(())
     })
 }
 
-fn consume_command(sdef: &str, output: &str, language: &str, framework: Option<&str>, compat_mode: &str, fidelity: &str, db_path: &str) -> Result<()> {
-    // 1. Import S.DEF file into database
-    println!("Step 1/5: Importing S.DEF from {}...", sdef);
+fn consume_command(
+    sdef: &str, output: &str, language: &str, framework: Option<&str>,
+    compat_mode: &str, fidelity: &str, db_path: &str,
+) -> Result<()> {
+    println!("{}", tr_global!("cli.consume_step1", sdef));
     import_sdef_file(sdef, db_path)?;
 
-    // 2. Open database and configure
     let db = Arc::new(Database::open(Path::new(db_path))?);
 
-    // 3. Apply compatibility filter
     let compat = match compat_mode {
         "full" => cleanroom_agent::ResolverMode::Full,
         "mixed" => cleanroom_agent::ResolverMode::Mixed,
@@ -166,40 +162,39 @@ fn consume_command(sdef: &str, output: &str, language: &str, framework: Option<&
     let compat_resolver = CompatibilityResolver::new(db.clone(), compat);
     println!("Step 2/5: {}", compat_resolver.describe());
 
-    // 4. Generate code using consumer agent
     let config = ConsumerConfig {
         language: language.to_string(),
         framework: framework.map(String::from),
         compatibility_mode: CompatibilityMode::Full,
-        fidelity: if fidelity == "high" { Fidelity::High } else if fidelity == "low" { Fidelity::Low } else { Fidelity::Medium },
+        fidelity: if fidelity == "high" { Fidelity::High }
+                  else if fidelity == "low" { Fidelity::Low }
+                  else { Fidelity::Medium },
         output_path: Path::new(output).to_path_buf(),
     };
     let consumer = ConsumerAgent::new(config, db.clone());
-    let rt = tokio::runtime::Runtime::new().context("Failed to create runtime")?;
+    let rt = tokio::runtime::Runtime::new().context(tr_global!("cli.error_runtime"))?;
     rt.block_on(async {
-        println!("Step 3/5: Generating {} code → {}...", language, output);
+        println!("{}", tr_global!("cli.consume_step3", language, output));
         match consumer.generate_code().await {
-            Ok(()) => println!("Step 4/5: Code generation complete!"),
+            Ok(()) => println!("{}", tr_global!("cli.consume_step4")),
             Err(e) => eprintln!("Error: {}", e),
         }
     });
 
-    // 5. Print completeness report
     let validator = CompletenessValidator::new(db);
     match validator.validate("") {
         Ok(report) => println!("{}", format_report(&report)),
         Err(_) => {}
     }
-
     Ok(())
 }
 
 fn serve_command(transport: &str, db_path: &str) -> Result<()> {
-    let rt = tokio::runtime::Runtime::new().context("Failed to create Tokio runtime")?;
+    let rt = tokio::runtime::Runtime::new().context(tr_global!("cli.error_runtime"))?;
     rt.block_on(async {
         let server = cleanroom_mcp::CleanroomMcpServer::new(Path::new(db_path))
-            .context("Failed to create MCP server")?;
-        println!("MCP server starting with {} transport...", transport);
+            .context(tr_global!("cli.error_mcp_server"))?;
+        println!("{}", tr_global!("cli.serve_starting", transport));
         server.serve().await?;
         Ok(())
     })
@@ -209,82 +204,80 @@ fn resume_command(document: &str, retry_failed: bool, db_path: &str) -> Result<(
     let db = Database::open(Path::new(db_path))?;
     let repo = TaskRepository::new(db.connection_arc());
 
-    // Find all tasks for this document
-    let all_tasks = repo.list(None, None, None).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let all_tasks = repo.list(None, None, None)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-    // Filter by document name in input_json
     let doc_tasks: Vec<_> = all_tasks.iter().filter(|t| {
         t.input_json.contains(document)
     }).collect();
 
     if doc_tasks.is_empty() {
-        println!("No tasks found for document '{}'", document);
-        println!("Try: inspect document to see available documents");
+        println!("{}", tr_global!("cli.resume_no_tasks", document));
+        println!("{}", tr_global!("cli.resume_hint"));
         return Ok(());
     }
 
-    // Separate completed, pending, and failed tasks
     let pending: Vec<_> = doc_tasks.iter().filter(|t| t.status == TaskStatus::Pending).collect();
     let in_progress: Vec<_> = doc_tasks.iter().filter(|t| matches!(t.status, TaskStatus::InProgress | TaskStatus::Assigned)).collect();
     let failed: Vec<_> = doc_tasks.iter().filter(|t| t.status == TaskStatus::Failed).collect();
     let completed: Vec<_> = doc_tasks.iter().filter(|t| t.status == TaskStatus::Completed).collect();
 
-    println!("=== Workflow Summary for '{}' ===", document);
-    println!("  Total tasks:      {}", doc_tasks.len());
-    println!("  Completed:        {}", completed.len());
-    println!("  In progress:      {}", in_progress.len());
-    println!("  Pending:          {}", pending.len());
-    println!("  Failed:           {}", failed.len());
+    println!("{}", tr_global!("cli.resume_summary", document));
+    println!("{}", tr_global!("cli.resume_total", doc_tasks.len()));
+    println!("{}", tr_global!("cli.resume_completed", completed.len()));
+    println!("{}", tr_global!("cli.resume_in_progress", in_progress.len()));
+    println!("{}", tr_global!("cli.resume_pending", pending.len()));
+    println!("{}", tr_global!("cli.resume_failed", failed.len()));
 
-    // Reset in_progress tasks back to pending
     for task in &in_progress {
         repo.update_status(&task.task_id, TaskStatus::Pending)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        println!("  Reset '{}' to pending", task.task_id);
+        println!("{}", tr_global!("cli.resume_reset", task.task_id));
     }
 
-    // Optionally reset failed tasks
     if retry_failed {
         for task in &failed {
             repo.update_status(&task.task_id, TaskStatus::Pending)
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            println!("  Retrying '{}'", task.task_id);
+            println!("{}", tr_global!("cli.resume_retrying", task.task_id));
         }
     }
 
-    println!("\nReady to resume. Run `cleanroom produce` to continue processing.");
+    println!("{}", tr_global!("cli.resume_ready"));
     Ok(())
 }
 
 fn inspect_command(check_type: &str, db_path: &str) -> Result<()> {
-    let db = Database::open(Path::new(db_path))?;
-    println!("=== Cleanroom Inspector ===");
-    println!("Database: {}", db_path);
+    let db = match Database::open(Path::new(db_path)) {
+        Ok(db) => db,
+        Err(_) => {
+            println!("{}", tr_global!("cli.inspect_no_db", db_path));
+            return Ok(());
+        }
+    };
+
+    println!("{}", tr_global!("cli.inspect_header"));
+    println!("{}", tr_global!("cli.inspect_db", db_path));
 
     match check_type {
         "consistency" => {
-            // Check for inconsistent fingerprints
             let conn = db.connection();
             let mut stmt = conn.prepare(
                 "SELECT COUNT(*) FROM fingerprints WHERE sdef_hash != db_hash OR db_hash != code_hash"
             ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            let inconsistent: i64 = stmt.query_row([], |row| row.get(0))
-                .unwrap_or(0);
-            println!("Inconsistent fingerprints: {}", inconsistent);
+            let inconsistent: i64 = stmt.query_row([], |row| row.get(0)).unwrap_or(0);
+            println!("{}", tr_global!("cli.inspect_inconsistent", inconsistent));
 
-            let mut stmt = conn.prepare(
-                "SELECT COUNT(*) FROM fingerprints"
-            ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            let total: i64 = stmt.query_row([], |row| row.get(0))
-                .unwrap_or(0);
-            println!("Total fingerprints: {}", total);
+            let mut stmt = conn.prepare("SELECT COUNT(*) FROM fingerprints")
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            let total: i64 = stmt.query_row([], |row| row.get(0)).unwrap_or(0);
+            println!("{}", tr_global!("cli.inspect_total_fp", total));
             if total > 0 {
                 let pct = 100.0 * (total - inconsistent) as f64 / total as f64;
-                println!("Consistency: {:.1}%", pct);
+                println!("{}", tr_global!("cli.inspect_consistency", pct));
             }
         }
         "coverage" => {
-            // Count data models and attributes
             let conn = db.connection();
             let models: i64 = conn.query_row("SELECT COUNT(*) FROM data_models", [], |r| r.get(0)).unwrap_or(0);
             let attrs: i64 = conn.query_row("SELECT COUNT(*) FROM data_attributes", [], |r| r.get(0)).unwrap_or(0);
@@ -292,12 +285,12 @@ fn inspect_command(check_type: &str, db_path: &str) -> Result<()> {
             let functions: i64 = conn.query_row("SELECT COUNT(*) FROM function_specs", [], |r| r.get(0)).unwrap_or(0);
             let symbols: i64 = conn.query_row("SELECT COUNT(*) FROM symbol_registry", [], |r| r.get(0)).unwrap_or(0);
 
-            println!("S.DEF coverage:");
-            println!("  Data models:    {}", models);
-            println!("  Attributes:     {}", attrs);
-            println!("  Contracts:      {}", contracts);
-            println!("  Functions:      {}", functions);
-            println!("  Symbols:        {}", symbols);
+            println!("{}", tr_global!("cli.inspect_coverage"));
+            println!("{}", tr_global!("cli.inspect_data_models", models));
+            println!("{}", tr_global!("cli.inspect_attributes", attrs));
+            println!("{}", tr_global!("cli.inspect_contracts", contracts));
+            println!("{}", tr_global!("cli.inspect_functions", functions));
+            println!("{}", tr_global!("cli.inspect_symbols", symbols));
         }
         "progress" => {
             let conn = db.connection();
@@ -308,7 +301,7 @@ fn inspect_command(check_type: &str, db_path: &str) -> Result<()> {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             }).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-            println!("Task progress:");
+            println!("{}", tr_global!("cli.inspect_task_progress"));
             let mut total = 0i64;
             let mut results = Vec::new();
             for row in rows.flatten() {
@@ -317,11 +310,11 @@ fn inspect_command(check_type: &str, db_path: &str) -> Result<()> {
             }
             for (status, count) in &results {
                 let pct = if total > 0 { 100.0 * *count as f64 / total as f64 } else { 0.0 };
-                println!("  {:<20}: {:>4} ({:.1}%)", status, count, pct);
+                println!("{}", tr_global!("cli.inspect_task_line", status, count, pct));
             }
         }
         _ => {
-            println!("Unknown check type: {}", check_type);
+            println!("{}", tr_global!("cli.inspect_unknown_check", check_type));
         }
     }
     Ok(())
@@ -333,7 +326,6 @@ fn export_command(document: &str, output: &str, format: &str, db_path: &str) -> 
     let db = Database::open(Path::new(db_path))?;
     let conn = db.connection();
 
-    // Query the SoftwareDefinition from the database
     let mut stmt = conn.prepare(
         "SELECT name, version, description FROM sdef_documents WHERE name = ?1"
     ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -345,36 +337,34 @@ fn export_command(document: &str, output: &str, format: &str, db_path: &str) -> 
             row.get::<_, Option<String>>(1)?,
             row.get::<_, Option<String>>(2)?,
         ))
-    ).map_err(|e| anyhow::anyhow!("Document '{}' not found: {}", document, e))?;
+    ).map_err(|e| anyhow::anyhow!(tr_global!("cli.error_no_doc_in_db")))?;
 
     drop(stmt);
 
-    // Build the SoftwareDefinition  
     let sdef = build_export_sdef(&conn, &name, version, description)?;
 
-    // Write output
     let output_dir = Path::new(output).parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(output_dir)
-        .context("Failed to create output directory")?;
+        .context(tr_global!("cli.error_output_dir"))?;
 
     match format {
         "yaml" | "yml" => {
             let yaml = serde_yaml::to_string(&sdef)
-                .context("Failed to serialize YAML")?;
+                .context(tr_global!("cli.error_serialize_yaml"))?;
             let mut file = std::fs::File::create(output)
-                .context("Failed to create output file")?;
+                .context(tr_global!("cli.error_output_file"))?;
             file.write_all(yaml.as_bytes())?;
         }
         _ => {
             let json = serde_json::to_string_pretty(&sdef)
-                .context("Failed to serialize JSON")?;
+                .context(tr_global!("cli.error_serialize_json"))?;
             let mut file = std::fs::File::create(output)
-                .context("Failed to create output file")?;
+                .context(tr_global!("cli.error_output_file"))?;
             file.write_all(json.as_bytes())?;
         }
     }
 
-    println!("Exported document '{}' to {}", document, output);
+    println!("{}", tr_global!("cli.export_success", document, output));
     Ok(())
 }
 
@@ -390,7 +380,6 @@ fn build_export_sdef(
     sdef.version = version;
     sdef.description = description;
 
-    // Export data models
     let mut stmt = conn.prepare(
         "SELECT entity, status, version, description, logical_model FROM data_models WHERE document_name = ?1"
     ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -405,7 +394,6 @@ fn build_export_sdef(
         let version: Option<String> = row.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let description: Option<String> = row.get(3).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-        // Export attributes
         let mut attr_stmt = conn.prepare(
             "SELECT name, attr_type, format, description, required, identity, generated, unique_flag, internal, deprecated
              FROM data_attributes WHERE document_name = ?1 AND entity = ?2"
@@ -455,21 +443,22 @@ fn build_export_sdef(
         sdef.data_models = Some(models);
     }
 
-    println!("Exported {} data models", sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0));
+    let count = sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0);
+    println!("{}", tr_global!("cli.export_data_models", count));
     Ok(sdef)
 }
 
 /// Parse and import an S.DEF file into the database.
 fn import_sdef_file(file: &str, db_path: &str) -> Result<String> {
     let content = std::fs::read_to_string(file)
-        .context(format!("Failed to read file: {}", file))?;
+        .context(tr_global!("cli.import_fail_read"))?;
 
     let sdef: sdef_core::SoftwareDefinition = if file.ends_with(".yaml") || file.ends_with(".yml") {
         serde_yaml::from_str(&content)
-            .context("Failed to parse YAML S.DEF file")?
+            .context(tr_global!("cli.import_fail_parse_yaml"))?
     } else {
         serde_json::from_str(&content)
-            .context("Failed to parse JSON S.DEF file")?
+            .context(tr_global!("cli.import_fail_parse_json"))?
     };
 
     let db = Database::open(Path::new(db_path))?;
@@ -511,7 +500,7 @@ fn import_sdef_file(file: &str, db_path: &str) -> Result<String> {
     }
 
     let model_count = sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0);
-    println!("Imported document '{}' with {} data models", sdef.name, model_count);
+    println!("{}", tr_global!("cli.import_success", sdef.name, model_count));
     Ok(sdef.name)
 }
 
@@ -524,16 +513,14 @@ fn migrate_command(direction: &str, db_path: &str) -> Result<()> {
     match direction {
         "up" => {
             let _db = Database::open(Path::new(db_path))?;
-            println!("Migrations applied successfully");
-            Ok(())
+            println!("{}", tr_global!("cli.migrate_success"));
         }
         "down" => {
-            println!("Down migration not supported in this version");
-            Ok(())
+            println!("{}", tr_global!("cli.migrate_down_unsupported"));
         }
         _ => {
-            println!("Unknown migration direction: {}", direction);
-            Ok(())
+            println!("{}", tr_global!("cli.migrate_unknown_direction", direction));
         }
     }
+    Ok(())
 }

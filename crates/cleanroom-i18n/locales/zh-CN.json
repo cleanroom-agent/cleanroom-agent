@@ -1,0 +1,155 @@
+{
+  "cli": {
+    "app_name": "Cleanroom Agent",
+    "app_about": "Cleanroom Agent — S.DEF 智能体系统",
+    "flag_db": "数据库路径",
+    "flag_log_level": "日志级别",
+
+    "produce_about": "生产模式：分析代码仓库 → 输出 S.DEF",
+    "produce_flag_repo": "源代码仓库路径",
+    "produce_flag_output": "S.DEF 文件输出目录",
+    "produce_flag_exclude": "需要排除的模式（逗号分隔）",
+    "produce_flag_name": "S.DEF 文档的项目名称",
+    "produce_processed": "已处理任务：{0}",
+    "produce_complete": "生产流程已完成：'{0}'",
+
+    "consume_about": "消费模式：读取 S.DEF → 生成代码",
+    "consume_flag_sdef": "S.DEF 文件或目录路径",
+    "consume_flag_output": "生成代码的输出目录",
+    "consume_flag_language": "目标编程语言",
+    "consume_flag_framework": "目标框架",
+    "consume_flag_compat_mode": "兼容模式（full/mixed/clean/custom）",
+    "consume_flag_fidelity": "保真度（low/medium/high）",
+    "consume_step1": "步骤 1/5：正在从 {0} 导入 S.DEF...",
+    "consume_step3": "步骤 3/5：正在生成 {0} 代码 → {1}...",
+    "consume_step4": "步骤 4/5：代码生成完成！",
+
+    "serve_about": "MCP 服务器模式",
+    "serve_flag_transport": "传输协议（stdio/http）",
+    "serve_starting": "MCP 服务器正在启动，传输协议：{0}...",
+
+    "resume_about": "从检查点恢复工作流",
+    "resume_flag_document": "要恢复的文档名称",
+    "resume_flag_retry_failed": "同时重试失败的任务",
+    "resume_no_tasks": "在文档 '{0}' 中未找到任务",
+    "resume_hint": "提示：使用 inspect 命令查看可用文档",
+    "resume_summary": "=== '{0}' 的工作流摘要 ===",
+    "resume_total": "  总任务数：      {0}",
+    "resume_completed": "  已完成：        {0}",
+    "resume_in_progress": "  进行中：        {0}",
+    "resume_pending": "  待处理：        {0}",
+    "resume_failed": "  失败：          {0}",
+    "resume_reset": "  已将 '{0}' 重置为待处理",
+    "resume_retrying": "  正在重试 '{0}'",
+    "resume_ready": "\n已准备好恢复。运行 'cleanroom produce' 继续处理。",
+
+    "inspect_about": "检查数据库/S.DEF 状态",
+    "inspect_flag_check_type": "检查类型（consistency/coverage/progress）",
+    "inspect_header": "=== Cleanroom 检查器 ===",
+    "inspect_db": "数据库：{0}",
+    "inspect_inconsistent": "不一致的指纹：{0}",
+    "inspect_total_fp": "总指纹数：{0}",
+    "inspect_consistency": "一致性：{0:.1}%",
+    "inspect_coverage": "S.DEF 覆盖率：",
+    "inspect_data_models": "  数据模型：    {0}",
+    "inspect_attributes": "  属性：        {0}",
+    "inspect_contracts": "  契约：        {0}",
+    "inspect_functions": "  函数：        {0}",
+    "inspect_symbols": "  符号：        {0}",
+    "inspect_task_progress": "任务进度：",
+    "inspect_task_line": "  {0:<20}：{1:>4}（{2:.1}%）",
+    "inspect_unknown_check": "未知的检查类型：{0}",
+    "inspect_no_db": "在 '{0}' 未找到数据库。请先运行 'cleanroom produce'。",
+
+    "export_about": "从数据库导出 S.DEF 文档到 JSON/YAML 文件",
+    "export_flag_document": "要导出的文档名称",
+    "export_flag_output": "输出文件路径",
+    "export_flag_format": "输出格式：json（默认）或 yaml",
+    "export_success": "已将文档 '{0}' 导出到 {1}",
+    "export_data_models": "已导出 {0} 个数据模型",
+
+    "import_about": "从 JSON/YAML 文件导入 S.DEF 到数据库",
+    "import_flag_file": "要导入的 S.DEF 文件",
+    "import_success": "已导入文档 '{0}'，包含 {1} 个数据模型",
+    "import_fail_parse_yaml": "解析 YAML S.DEF 文件失败",
+    "import_fail_parse_json": "解析 JSON S.DEF 文件失败",
+    "import_fail_read": "读取文件失败：{0}",
+
+    "migrate_about": "数据库迁移",
+    "migrate_flag_direction": "迁移方向（up/down）",
+    "migrate_success": "迁移已成功应用",
+    "migrate_down_unsupported": "此版本不支持向下迁移",
+    "migrate_unknown_direction": "未知的迁移方向：{0}",
+
+    "error_runtime": "创建 Tokio 运行时失败",
+    "error_orchestrator": "创建协调器失败",
+    "error_mcp_server": "创建 MCP 服务器失败",
+    "error_output_dir": "创建输出目录失败",
+    "error_serialize_yaml": "序列化 YAML 失败",
+    "error_serialize_json": "序列化 JSON 失败",
+    "error_output_file": "创建输出文件失败",
+    "error_no_doc_in_db": "数据库中未找到文档"
+  },
+
+  "mcp": {
+    "server_instructions": "Cleanroom Agent — 基于 S.DEF 格式的智能体系统。使用工具分析代码仓库、生成代码、管理任务和确保一致性。",
+
+    "create_task": "创建新的分析或生成任务",
+    "claim_task": "原子获取下一个待处理任务",
+    "update_task_progress": "更新任务进度（0.0~1.0）",
+    "complete_task": "标记任务完成并提交输出",
+    "fail_task": "标记任务失败并记录错误",
+    "send_heartbeat": "发送任务心跳信号",
+    "get_task": "根据 ID 获取任务详情",
+    "list_tasks": "列出任务（支持按状态/类型/责任人过滤）",
+
+    "get_data_model": "获取数据模型（含属性和关系）",
+    "get_contract": "获取契约（接口/类/API/枚举）",
+    "list_documents": "列出所有 S.DEF 文档",
+    "search_sdef": "全文搜索 S.DEF 文档",
+    "get_dependency_graph": "获取模块依赖图",
+
+    "resolve_name": "解析 S.DEF URI → 代码名称",
+    "batch_resolve_names": "批量解析 URI → 名称",
+    "list_symbols": "列出已注册符号（按语言/类型过滤）",
+    "register_custom_name": "手动注册自定义名称",
+
+    "export_sdef": "导出完整 S.DEF（JSON/YAML）",
+    "import_sdef": "从 JSON 导入 S.DEF 到数据库",
+
+    "create_checkpoint": "创建全局检查点",
+    "list_checkpoints": "列出文档的检查点",
+    "restore_checkpoint": "从检查点恢复",
+
+    "begin_transaction": "开始数据库事务",
+    "commit_transaction": "提交事务",
+    "rollback_transaction": "回滚事务",
+
+    "check_consistency": "运行一致性检查（fast/full/deep）",
+    "compute_fingerprints": "重新计算并存储指纹",
+
+    "error_prefix": "错误：{0}"
+  },
+
+  "progress": {
+    "template_bar": "{spinner:.green} [{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}",
+    "template_spinner": "{spinner:.green} {msg}",
+    "progress_chars": "=> ",
+    "format_kv": "  {0:<30} {1}",
+    "format_section": "\n─── {0} ───",
+    "format_list_item": "    • {0}",
+    "status_loading": "加载中...",
+    "status_processing": "处理中...",
+    "status_done": "完成",
+    "status_error": "错误"
+  },
+
+  "agent": {
+    "orchestrator_started": "协调器已启动：文档 '{0}'",
+    "task_created": "任务已创建：{0}（{1}）",
+    "task_completed": "任务已完成：{0}",
+    "task_failed": "任务失败：{0} — {1}",
+    "checkpoint_created": "自动检查点已创建：{0}",
+    "workflow_resumed": "工作流已从检查点 '{0}' 恢复"
+  }
+}

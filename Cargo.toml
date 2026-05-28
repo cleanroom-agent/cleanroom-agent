@@ -7,6 +7,7 @@ members = [
     "crates/cleanroom-lsp",
     "crates/cleanroom-agent",
     "crates/cleanroom-cli",
+    "crates/cleanroom-i18n",
 ]
 
 [workspace.dependencies]

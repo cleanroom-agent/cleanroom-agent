@@ -1,0 +1,9 @@
+[package]
+name = "cleanroom-i18n"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Internationalization support for Cleanroom Agent"
+
+[dependencies]
+serde_json.workspace = true

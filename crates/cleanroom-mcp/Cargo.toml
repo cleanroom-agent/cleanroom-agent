@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 cleanroom-db = { path = "../cleanroom-db" }
+cleanroom-i18n = { path = "../cleanroom-i18n" }
 sdef-core = { path = "../sdef-core" }
 rmcp.workspace = true
 rmcp-macros.workspace = true

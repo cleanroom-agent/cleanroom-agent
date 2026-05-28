@@ -1,0 +1,155 @@
+{
+  "cli": {
+    "app_name": "Cleanroom Agent",
+    "app_about": "Cleanroom Agent — S.DEF intelligent agent system",
+    "flag_db": "Database path",
+    "flag_log_level": "Log level",
+
+    "produce_about": "Production mode: analyze code repository → output S.DEF",
+    "produce_flag_repo": "Source repository path",
+    "produce_flag_output": "Output directory for S.DEF files",
+    "produce_flag_exclude": "Patterns to exclude (comma-separated)",
+    "produce_flag_name": "Project name for S.DEF document",
+    "produce_processed": "Processed task: {0}",
+    "produce_complete": "Production completed for '{0}'",
+
+    "consume_about": "Consumption mode: read S.DEF → generate code",
+    "consume_flag_sdef": "S.DEF file or directory path",
+    "consume_flag_output": "Output directory for generated code",
+    "consume_flag_language": "Target programming language",
+    "consume_flag_framework": "Target framework",
+    "consume_flag_compat_mode": "Compatibility mode (full/mixed/clean/custom)",
+    "consume_flag_fidelity": "Fidelity (low/medium/high)",
+    "consume_step1": "Step 1/5: Importing S.DEF from {0}...",
+    "consume_step3": "Step 3/5: Generating {0} code → {1}...",
+    "consume_step4": "Step 4/5: Code generation complete!",
+
+    "serve_about": "MCP server mode",
+    "serve_flag_transport": "Transport protocol (stdio/http)",
+    "serve_starting": "MCP server starting with {0} transport...",
+
+    "resume_about": "Resume workflow from checkpoint",
+    "resume_flag_document": "Document name to resume",
+    "resume_flag_retry_failed": "Resume failed tasks too",
+    "resume_no_tasks": "No tasks found for document '{0}'",
+    "resume_hint": "Try: inspect document to see available documents",
+    "resume_summary": "=== Workflow Summary for '{0}' ===",
+    "resume_total": "  Total tasks:      {0}",
+    "resume_completed": "  Completed:        {0}",
+    "resume_in_progress": "  In progress:      {0}",
+    "resume_pending": "  Pending:          {0}",
+    "resume_failed": "  Failed:           {0}",
+    "resume_reset": "  Reset '{0}' to pending",
+    "resume_retrying": "  Retrying '{0}'",
+    "resume_ready": "\nReady to resume. Run 'cleanroom produce' to continue processing.",
+
+    "inspect_about": "Inspect database/S.DEF state",
+    "inspect_flag_check_type": "Check type (consistency/coverage/progress)",
+    "inspect_header": "=== Cleanroom Inspector ===",
+    "inspect_db": "Database: {0}",
+    "inspect_inconsistent": "Inconsistent fingerprints: {0}",
+    "inspect_total_fp": "Total fingerprints: {0}",
+    "inspect_consistency": "Consistency: {0:.1}%",
+    "inspect_coverage": "S.DEF coverage:",
+    "inspect_data_models": "  Data models:    {0}",
+    "inspect_attributes": "  Attributes:     {0}",
+    "inspect_contracts": "  Contracts:      {0}",
+    "inspect_functions": "  Functions:      {0}",
+    "inspect_symbols": "  Symbols:        {0}",
+    "inspect_task_progress": "Task progress:",
+    "inspect_task_line": "  {0:<20}: {1:>4} ({2:.1}%)",
+    "inspect_unknown_check": "Unknown check type: {0}",
+    "inspect_no_db": "No database found at '{0}'. Run 'cleanroom produce' first.",
+
+    "export_about": "Export S.DEF document from database to JSON/YAML file",
+    "export_flag_document": "Document name to export",
+    "export_flag_output": "Output file path",
+    "export_flag_format": "Output format: json (default) or yaml",
+    "export_success": "Exported document '{0}' to {1}",
+    "export_data_models": "Exported {0} data models",
+
+    "import_about": "Import S.DEF from JSON/YAML file into database",
+    "import_flag_file": "S.DEF file to import",
+    "import_success": "Imported document '{0}' with {1} data models",
+    "import_fail_parse_yaml": "Failed to parse YAML S.DEF file",
+    "import_fail_parse_json": "Failed to parse JSON S.DEF file",
+    "import_fail_read": "Failed to read file: {0}",
+
+    "migrate_about": "Database migration",
+    "migrate_flag_direction": "Migration direction (up/down)",
+    "migrate_success": "Migrations applied successfully",
+    "migrate_down_unsupported": "Down migration not supported in this version",
+    "migrate_unknown_direction": "Unknown migration direction: {0}",
+
+    "error_runtime": "Failed to create Tokio runtime",
+    "error_orchestrator": "Failed to create orchestrator",
+    "error_mcp_server": "Failed to create MCP server",
+    "error_output_dir": "Failed to create output directory",
+    "error_serialize_yaml": "Failed to serialize YAML",
+    "error_serialize_json": "Failed to serialize JSON",
+    "error_output_file": "Failed to create output file",
+    "error_no_doc_in_db": "No document found in database"
+  },
+
+  "mcp": {
+    "server_instructions": "Cleanroom Agent — intelligent agent system based on S.DEF format. Use tools to analyze code repositories, generate code, manage tasks, and ensure consistency.",
+
+    "create_task": "Create a new analysis or generation task",
+    "claim_task": "Atomically claim the next pending task",
+    "update_task_progress": "Update task progress (0.0~1.0)",
+    "complete_task": "Mark task as complete and submit output",
+    "fail_task": "Mark task as failed and record error",
+    "send_heartbeat": "Send heartbeat signal for a task",
+    "get_task": "Get task details by ID",
+    "list_tasks": "List tasks (filter by status/type/assignee)",
+
+    "get_data_model": "Get data model with attributes and relationships",
+    "get_contract": "Get contract (interface/class/API/enum)",
+    "list_documents": "List all S.DEF documents",
+    "search_sdef": "Full-text search across S.DEF documents",
+    "get_dependency_graph": "Get module dependency graph",
+
+    "resolve_name": "Resolve S.DEF URI to code name",
+    "batch_resolve_names": "Batch resolve URIs to code names",
+    "list_symbols": "List registered symbols (filter by language/type)",
+    "register_custom_name": "Register a custom name manually",
+
+    "export_sdef": "Export complete S.DEF document (JSON/YAML)",
+    "import_sdef": "Import S.DEF from JSON into database",
+
+    "create_checkpoint": "Create a global checkpoint snapshot",
+    "list_checkpoints": "List checkpoints for a document",
+    "restore_checkpoint": "Restore from a checkpoint",
+
+    "begin_transaction": "Begin a database transaction",
+    "commit_transaction": "Commit the current transaction",
+    "rollback_transaction": "Rollback the current transaction",
+
+    "check_consistency": "Run consistency check (fast/full/deep)",
+    "compute_fingerprints": "Recompute and store fingerprints",
+
+    "error_prefix": "Error: {0}"
+  },
+
+  "progress": {
+    "template_bar": "{spinner:.green} [{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}",
+    "template_spinner": "{spinner:.green} {msg}",
+    "progress_chars": "=> ",
+    "format_kv": "  {0:<30} {1}",
+    "format_section": "\n─── {0} ───",
+    "format_list_item": "    • {0}",
+    "status_loading": "Loading...",
+    "status_processing": "Processing...",
+    "status_done": "Done",
+    "status_error": "Error"
+  },
+
+  "agent": {
+    "orchestrator_started": "Orchestrator started: document '{0}'",
+    "task_created": "Task created: {0} ({1})",
+    "task_completed": "Task completed: {0}",
+    "task_failed": "Task failed: {0} — {1}",
+    "checkpoint_created": "Automatic checkpoint created: {0}",
+    "workflow_resumed": "Workflow resumed from checkpoint '{0}'"
+  }
+}
