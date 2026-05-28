@@ -1,0 +1,71 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sdef-core",
+    "crates/cleanroom-db",
+    "crates/cleanroom-mcp",
+    "crates/cleanroom-lsp",
+    "crates/cleanroom-agent",
+    "crates/cleanroom-cli",
+]
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled", "column_decltype", "vtab", "array", "backup"] }
+
+# MCP SDK (official: https://github.com/modelcontextprotocol/rust-sdk)
+rmcp = { version = "1.7", features = ["server", "macros"] }
+rmcp-macros = "1.7"
+schemars = "0.8"
+
+# Agent Framework
+adk-rust = "0.9"
+
+# Async Runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# LSP
+lsp-types = "0.97"
+lsp-server = "0.7"
+
+# Code Analysis
+tree-sitter = "0.24"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+blake3 = "1.5"
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "5"
+tempfile = "3"
+regex = "1"
+glob = "0.3"
+ignore = "0.4"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/cleanroom-agent/cleanroom-agent"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
