@@ -148,6 +148,8 @@ impl CleanroomMcpServer {
             // S.DEF Query
             "get_data_model" => self.handle_get_data_model(args_value),
             "get_contract" => self.handle_get_contract(args_value),
+            "get_function_spec" => self.handle_get_function_spec(args_value),
+            "get_ui_screen" => self.handle_get_ui_screen(args_value),
             "list_documents" => self.handle_list_documents(args_value),
             "search_sdef" => self.handle_search_sdef(args_value),
             "get_dependency_graph" => self.handle_list_documents(args_value),
@@ -329,6 +331,32 @@ impl CleanroomMcpServer {
             "name": d.name, "version": d.version, "description": d.description,
         })).collect();
         Ok(json!(results))
+    }
+
+    fn handle_get_function_spec(&self, args: Value) -> Result<Value, String> {
+        #[derive(serde::Deserialize)]
+        struct P { document_name: String, name: String }
+        let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let fs = self.sdef_repo().get_function_spec(&p.document_name, &p.name)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "name": fs.name, "description": fs.description,
+            "logic": fs.logic, "complexity": fs.complexity,
+            "pure_function": fs.pure_function,
+        }))
+    }
+
+    fn handle_get_ui_screen(&self, args: Value) -> Result<Value, String> {
+        #[derive(serde::Deserialize)]
+        struct P { document_name: String, screen_id: String }
+        let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let screen = self.sdef_repo().get_ui_screen(&p.document_name, &p.screen_id)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "id": screen.id, "name": screen.name,
+            "route": screen.route, "purpose": screen.purpose,
+            "layout_description": screen.layout_description,
+        }))
     }
 
     // ============ Naming Service Tool Handlers ============
@@ -544,6 +572,8 @@ fn all_tools() -> Vec<Tool> {
         // S.DEF Query
         make_tool::<GetDataModelParams>("get_data_model", "mcp.get_data_model", true),
         make_tool::<GetContractParams>("get_contract", "mcp.get_contract", true),
+        make_tool::<GetFunctionSpecParams>("get_function_spec", "mcp.get_function_spec", true),
+        make_tool::<GetUiScreenParams>("get_ui_screen", "mcp.get_ui_screen", true),
         make_tool::<ListDocumentsParams>("list_documents", "mcp.list_documents", true),
         make_tool::<SearchSdefParams>("search_sdef", "mcp.search_sdef", true),
         make_tool::<GetDataModelParams>("get_dependency_graph", "mcp.get_dependency_graph", true),

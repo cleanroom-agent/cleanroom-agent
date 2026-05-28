@@ -105,6 +105,8 @@
 
     "get_data_model": "获取数据模型（含属性和关系）",
     "get_contract": "获取契约（接口/类/API/枚举）",
+    "get_function_spec": "获取函数规格（含参数和逻辑）",
+    "get_ui_screen": "获取 UI 屏幕详情（含布局和用途）",
     "list_documents": "列出所有 S.DEF 文档",
     "search_sdef": "全文搜索 S.DEF 文档",
     "get_dependency_graph": "获取模块依赖图",

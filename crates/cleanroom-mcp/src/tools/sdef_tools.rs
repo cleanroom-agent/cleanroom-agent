@@ -38,6 +38,13 @@ fn default_search_limit() -> usize { 20 }
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListDocumentsParams {}
 
+/// Get UI screen parameters.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetUiScreenParams {
+    pub document_name: String,
+    pub screen_id: String,
+}
+
 /// List shards parameters.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListShardsParams {

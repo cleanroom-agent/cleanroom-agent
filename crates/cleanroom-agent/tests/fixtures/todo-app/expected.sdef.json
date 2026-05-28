@@ -1,0 +1,85 @@
+{
+  "sdef_version": "2026-05-27",
+  "name": "todo-app",
+  "description": "A simple Todo application with CRUD operations and filtering",
+  "version": "1.0.0",
+  "data_models": [
+    {
+      "entity": "Todo",
+      "description": "A task item in the todo list",
+      "attributes": [
+        { "name": "id", "type": "string", "description": "Unique identifier", "required": true, "identity": true },
+        { "name": "title", "type": "string", "description": "Task title", "required": true },
+        { "name": "completed", "type": "boolean", "description": "Whether the task is done", "required": true },
+        { "name": "createdAt", "type": "timestamp", "description": "When the task was created", "required": true },
+        { "name": "updatedAt", "type": "timestamp", "description": "When the task was last updated", "required": false }
+      ],
+      "relationships": []
+    },
+    {
+      "entity": "TodoFilter",
+      "description": "Filter criteria for listing todos",
+      "attributes": [
+        { "name": "status", "type": "string", "description": "Filter by status: active/completed/deleted", "required": false },
+        { "name": "search", "type": "string", "description": "Search in title", "required": false }
+      ]
+    }
+  ],
+  "contracts": {
+    "interfaces": [
+      {
+        "name": "ITodoService",
+        "is_abstract": true,
+        "description": "Todo service interface",
+        "methods": [
+          { "signature": "create(input: CreateTodoInput) -> Todo" },
+          { "signature": "getById(id: string) -> Todo | null" },
+          { "signature": "update(id: string, input: UpdateTodoInput) -> Todo | null" },
+          { "signature": "delete(id: string) -> boolean" },
+          { "signature": "list(filter?: TodoFilter) -> Todo[]" },
+          { "signature": "count() -> number" }
+        ]
+      }
+    ],
+    "classes": [
+      {
+        "name": "TodoService",
+        "description": "Concrete implementation of todo management",
+        "implements": ["ITodoService"],
+        "methods": [
+          { "signature": "create(input: CreateTodoInput) -> Promise<Todo>" },
+          { "signature": "getById(id: string) -> Promise<Todo | null>" },
+          { "signature": "update(id: string, input: UpdateTodoInput) -> Promise<Todo | null>" },
+          { "signature": "delete(id: string) -> Promise<boolean>" },
+          { "signature": "list(filter?: TodoFilter) -> Promise<Todo[]>" },
+          { "signature": "count() -> Promise<number>" }
+        ]
+      }
+    ]
+  },
+  "behavior": {
+    "functions": [
+      {
+        "name": "create",
+        "description": "Create a new todo item",
+        "inputs": [{ "name": "input", "type": "CreateTodoInput" }],
+        "outputs": [{ "name": "result", "type": "Todo" }],
+        "pure_function": false
+      },
+      {
+        "name": "getById",
+        "description": "Get a todo by ID",
+        "inputs": [{ "name": "id", "type": "string" }],
+        "outputs": [{ "name": "result", "type": "Todo | null" }],
+        "pure_function": true
+      },
+      {
+        "name": "list",
+        "description": "List todos with optional filtering and sorting",
+        "inputs": [{ "name": "filter", "type": "TodoFilter" }],
+        "outputs": [{ "name": "result", "type": "Todo[]" }],
+        "pure_function": true
+      }
+    ]
+  }
+}

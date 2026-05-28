@@ -456,4 +456,130 @@ impl SdefRepository {
 
         Ok(docs)
     }
+
+    // ============ Function Spec Operations ============
+
+    /// Get a function spec by name.
+    #[instrument(skip_all)]
+    pub fn get_function_spec(&self, document_name: &str, name: &str) -> DbResult<FunctionSpec> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, document_name, name, description, logic, complexity, pure_function
+                 FROM function_specs WHERE document_name = ?1 AND name = ?2",
+            )
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        stmt.query_row(params![document_name, name], |row| {
+            Ok(FunctionSpec {
+                id: row.get(0)?,
+                document_name: row.get(1)?,
+                name: row.get(2)?,
+                description: row.get(3)?,
+                logic: row.get(4)?,
+                complexity: row.get(5)?,
+                pure_function: row.get(6)?,
+            })
+        })
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => DbError::NotFound {
+                resource: "function_spec",
+                field: "name",
+                value: name.to_string(),
+            },
+            _ => DbError::QueryFailed(e.to_string()),
+        })
+    }
+
+    /// List function specs for a document.
+    #[instrument(skip_all)]
+    pub fn list_function_specs(&self, document_name: &str) -> DbResult<Vec<FunctionSpec>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, document_name, name, description, logic, complexity, pure_function
+                 FROM function_specs WHERE document_name = ?1 ORDER BY name",
+            )
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        let funcs = stmt
+            .query_map(params![document_name], |row| {
+                Ok(FunctionSpec {
+                    id: row.get(0)?,
+                    document_name: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    logic: row.get(4)?,
+                    complexity: row.get(5)?,
+                    pure_function: row.get(6)?,
+                })
+            })
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(funcs)
+    }
+
+    // ============ UI Screen Operations ============
+
+    /// Get a UI screen by ID.
+    #[instrument(skip_all)]
+    pub fn get_ui_screen(&self, document_name: &str, screen_id: &str) -> DbResult<UiScreen> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, document_name, name, route, purpose, layout_description
+                 FROM ui_screens WHERE document_name = ?1 AND id = ?2",
+            )
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        stmt.query_row(params![document_name, screen_id], |row| {
+            Ok(UiScreen {
+                id: row.get(0)?,
+                document_name: row.get(1)?,
+                name: row.get(2)?,
+                route: row.get(3)?,
+                purpose: row.get(4)?,
+                layout_description: row.get(5)?,
+            })
+        })
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => DbError::NotFound {
+                resource: "ui_screen",
+                field: "id",
+                value: screen_id.to_string(),
+            },
+            _ => DbError::QueryFailed(e.to_string()),
+        })
+    }
+
+    /// List UI screens for a document.
+    #[instrument(skip_all)]
+    pub fn list_ui_screens(&self, document_name: &str) -> DbResult<Vec<UiScreen>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, document_name, name, route, purpose, layout_description
+                 FROM ui_screens WHERE document_name = ?1 ORDER BY name",
+            )
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        let screens = stmt
+            .query_map(params![document_name], |row| {
+                Ok(UiScreen {
+                    id: row.get(0)?,
+                    document_name: row.get(1)?,
+                    name: row.get(2)?,
+                    route: row.get(3)?,
+                    purpose: row.get(4)?,
+                    layout_description: row.get(5)?,
+                })
+            })
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(screens)
+    }
 }

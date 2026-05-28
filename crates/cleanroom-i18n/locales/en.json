@@ -105,6 +105,8 @@
 
     "get_data_model": "Get data model with attributes and relationships",
     "get_contract": "Get contract (interface/class/API/enum)",
+    "get_function_spec": "Get function specification with parameters and logic",
+    "get_ui_screen": "Get UI screen details with layout and purpose",
     "list_documents": "List all S.DEF documents",
     "search_sdef": "Full-text search across S.DEF documents",
     "get_dependency_graph": "Get module dependency graph",
