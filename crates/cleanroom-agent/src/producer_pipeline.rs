@@ -43,6 +43,10 @@ pub async fn run_analysis_pipeline(
     version: &str,
     description: Option<String>,
 ) -> Result<PipelineResult, DbError> {
+    // 0. Initialize tree-sitter grammars
+    crate::tree_sitter_parser::init_builtin_grammars();
+    info!("tree-sitter grammars initialized");
+
     // 1. Scan repository
     info!(path = %repo_path.display(), "Starting repo scan");
     let scan_config = ScanConfig {

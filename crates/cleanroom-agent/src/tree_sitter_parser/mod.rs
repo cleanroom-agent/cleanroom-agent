@@ -77,6 +77,26 @@ pub fn has_grammar(language: &str) -> bool {
     registry.contains_key(language)
 }
 
+/// Initialize built-in tree-sitter grammars.
+///
+/// Registers static grammars for Rust, TypeScript, JavaScript, and Python.
+/// Call this once during application startup.
+pub fn init_builtin_grammars() {
+    // Rust grammar
+    register_grammar("rust", tree_sitter_rust::language());
+
+    // TypeScript and JavaScript (both from the typescript crate)
+    register_grammar("typescript", tree_sitter_typescript::language_typescript());
+    register_grammar("javascript", tree_sitter_typescript::language_javascript());
+
+    // Python grammar
+    register_grammar("python", tree_sitter_python::language());
+
+    info!(
+        "Initialized built-in tree-sitter grammars: rust, typescript, javascript, python"
+    );
+}
+
 /// List all registered grammar languages.
 pub fn registered_languages() -> Vec<String> {
     let registry = grammar_registry().lock().unwrap();
