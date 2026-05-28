@@ -14,6 +14,7 @@ pub use types::data_model::{DataAttribute, DataModel, DataRelationship, IndexDef
 pub use types::behavior::{Behavior, EdgeCase, FlowParticipant, FlowSpec, FlowStep, FunctionParam, FunctionSpec, StateMachine};
 pub use types::contracts::{ApiContract, ClassContract, CompatibilityModule, ContractMethod, Contracts, DataMigrationStub, EnumContract, InterfaceContract};
 pub use types::design_decisions::DesignDecision;
+pub use types::architecture::{Architecture, ArchitectureLayer, ArchitectureModule};
 pub use types::versioning::{CompatibilityMapping, DataMigration, DeprecationInfo, VersionRecord};
 pub use version::CURRENT_SCHEMA_VERSION;
 pub use types::shard::{ShardMetadata, ShardStatus, ShardType};

@@ -97,7 +97,6 @@ impl Database {
     }
 
     /// Create an in-memory database for testing.
-    #[cfg(test)]
     pub fn in_memory() -> DbResult<Self> {
         let conn = Connection::open_in_memory()
             .map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
