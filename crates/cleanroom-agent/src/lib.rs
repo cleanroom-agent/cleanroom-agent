@@ -25,6 +25,7 @@ pub mod two_phase_commit;
 pub mod scheduler;
 pub mod test_extractor;
 pub mod compat_detector;
+pub mod design_decisions;
 
 pub use orchestrator::{Orchestrator, OrchestratorConfig};
 pub use producer::{ProducerAgent, ProducerConfig};
@@ -45,3 +46,4 @@ pub use code_merger::{CodeMerger, MergeConfig, MergeResult, CodeFragment, MergeC
 pub use scheduler::{Scheduler, TaskPlan, ProgressSummary};
 pub use test_extractor::{extract_tests, build_test_contract, persist_test_contract, ExtractionResult};
 pub use compat_detector::{CompatDetector, DetectionResult, CompatPattern, CompatCategory, build_compat_module};
+pub use design_decisions::{infer_decisions, persist_decisions, InferenceResult};

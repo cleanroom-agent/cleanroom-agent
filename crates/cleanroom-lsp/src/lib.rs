@@ -9,6 +9,9 @@ pub mod language_detection;
 
 pub use error::{LspError, LspResult};
 pub use server_pool::{LspConfig, LspServerPool, LspServerHandle};
-pub use file_analysis::{FileAnalysis, DocumentSymbol, Diagnostic, DiagnosticSeverity};
+pub use file_analysis::{
+    FileAnalysis, DocumentSymbol, Diagnostic, DiagnosticSeverity,
+    TypeInfo, TypeHierarchy, TypeHierarchyItem, TextPosition,
+};
 pub use language_detection::{detect_language, supported_languages, is_language_supported};
-pub use lsp_types::{SymbolKind as SymbolKind, Location};
+pub use lsp_types::{Location, SymbolKind};

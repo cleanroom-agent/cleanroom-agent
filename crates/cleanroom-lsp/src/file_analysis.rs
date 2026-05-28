@@ -8,16 +8,16 @@ use lsp_types::{Location, SymbolKind};
 pub struct DocumentSymbol {
     /// Symbol name.
     pub name: String,
-    
+
     /// Symbol kind (Class, Function, etc.).
     pub kind: SymbolKind,
-    
-    /// Source location range.
-    pub range: Option<(u32, u32, u32, u32)>, // (start_line, start_col, end_line, end_col)
-    
+
+    /// Source location range: (start_line, start_col, end_line, end_col).
+    pub range: Option<(u32, u32, u32, u32)>,
+
     /// Child symbols.
     pub children: Vec<DocumentSymbol>,
-    
+
     /// Additional detail information.
     pub detail: Option<String>,
 }
@@ -27,22 +27,22 @@ pub struct DocumentSymbol {
 pub struct FileAnalysis {
     /// File path.
     pub file_path: String,
-    
+
     /// Language of the file.
     pub language: String,
-    
+
     /// All document symbols (top-level and nested).
     pub symbols: Vec<DocumentSymbol>,
-    
+
     /// Import statements.
     pub imports: Vec<String>,
-    
+
     /// Export statements.
     pub exports: Vec<String>,
-    
+
     /// References to other symbols.
     pub references: Vec<Location>,
-    
+
     /// Diagnostics (errors/warnings).
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -52,13 +52,13 @@ pub struct FileAnalysis {
 pub struct Diagnostic {
     /// Severity level.
     pub severity: DiagnosticSeverity,
-    
+
     /// Message.
     pub message: String,
-    
-    /// Source location.
+
+    /// Source location: (start_line, start_col, end_line, end_col).
     pub range: Option<(u32, u32, u32, u32)>,
-    
+
     /// Error code (if applicable).
     pub code: Option<String>,
 }
@@ -83,4 +83,64 @@ impl From<lsp_types::DiagnosticSeverity> for DiagnosticSeverity {
             _ => DiagnosticSeverity::Information,
         }
     }
+}
+
+// ============ Advanced Query Types ============
+
+/// Type information at a given position.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeInfo {
+    /// Display name of the type.
+    pub type_name: String,
+
+    /// Type kind (struct, enum, interface, etc.).
+    pub kind: Option<String>,
+
+    /// Documentation string if available.
+    pub documentation: Option<String>,
+
+    /// File path where the type is defined.
+    pub defined_in_file: Option<String>,
+
+    /// Source location range.
+    pub range: Option<(u32, u32, u32, u32)>,
+
+    /// Generic type parameters.
+    pub type_parameters: Vec<String>,
+}
+
+/// Type hierarchy information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeHierarchy {
+    /// The type being queried.
+    pub type_name: String,
+
+    /// Supertypes (parents / base classes).
+    pub supertypes: Vec<TypeHierarchyItem>,
+
+    /// Subtypes (children / derived classes).
+    pub subtypes: Vec<TypeHierarchyItem>,
+}
+
+/// An item in a type hierarchy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeHierarchyItem {
+    /// Name of the type.
+    pub name: String,
+
+    /// Kind of type.
+    pub kind: String,
+
+    /// File path.
+    pub file_path: Option<String>,
+
+    /// Location range.
+    pub range: Option<(u32, u32, u32, u32)>,
+}
+
+/// Generic text document position.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextPosition {
+    pub line: u32,
+    pub character: u32,
 }
