@@ -6,6 +6,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod commands;
+mod progress;
 
 #[derive(Parser)]
 #[command(name = "cleanroom")]

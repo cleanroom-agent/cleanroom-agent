@@ -52,6 +52,7 @@ tempfile = "3"
 regex = "1"
 glob = "0.3"
 ignore = "0.4"
+indicatif = "0.17"
 
 [workspace.package]
 version = "0.1.0"
