@@ -1,9 +1,14 @@
 //! CLI commands.
 
 use std::path::Path;
+use std::sync::Arc;
 use anyhow::{Result, Context};
 use clap::Subcommand;
-use cleanroom_agent::{Orchestrator, OrchestratorConfig, ProducerAgent, ProducerConfig, ConsumerAgent, ConsumerConfig, CompatibilityMode, Fidelity, PipelineResult};
+use cleanroom_agent::{
+    Orchestrator, OrchestratorConfig, ProducerAgent, ProducerConfig,
+    ConsumerAgent, ConsumerConfig, CompatibilityMode, Fidelity,
+    CompatibilityResolver, CompletenessValidator, format_report,
+};
 use cleanroom_db::{Database, TaskRepository, TaskStatus, TaskType};
 
 #[derive(Subcommand)]
@@ -144,30 +149,48 @@ fn produce_command(repo: &str, output: &str, db_path: &str, name: Option<String>
 }
 
 fn consume_command(sdef: &str, output: &str, language: &str, framework: Option<&str>, compat_mode: &str, fidelity: &str, db_path: &str) -> Result<()> {
+    // 1. Import S.DEF file into database
+    println!("Step 1/5: Importing S.DEF from {}...", sdef);
+    import_sdef_file(sdef, db_path)?;
+
+    // 2. Open database and configure
+    let db = Arc::new(Database::open(Path::new(db_path))?);
+
+    // 3. Apply compatibility filter
     let compat = match compat_mode {
-        "full" => CompatibilityMode::Full,
-        "mixed" => CompatibilityMode::Mixed,
-        "clean" => CompatibilityMode::Clean,
-        "custom" => CompatibilityMode::Custom,
-        _ => CompatibilityMode::Mixed,
+        "full" => cleanroom_agent::ResolverMode::Full,
+        "mixed" => cleanroom_agent::ResolverMode::Mixed,
+        "clean" => cleanroom_agent::ResolverMode::Clean,
+        _ => cleanroom_agent::ResolverMode::Mixed,
     };
-    let fid = match fidelity {
-        "high" => Fidelity::High,
-        "medium" => Fidelity::Medium,
-        "low" => Fidelity::Low,
-        _ => Fidelity::Medium,
-    };
+    let compat_resolver = CompatibilityResolver::new(db.clone(), compat);
+    println!("Step 2/5: {}", compat_resolver.describe());
+
+    // 4. Generate code using consumer agent
     let config = ConsumerConfig {
         language: language.to_string(),
         framework: framework.map(String::from),
-        compatibility_mode: compat,
-        fidelity: fid,
+        compatibility_mode: CompatibilityMode::Full,
+        fidelity: if fidelity == "high" { Fidelity::High } else if fidelity == "low" { Fidelity::Low } else { Fidelity::Medium },
         output_path: Path::new(output).to_path_buf(),
     };
-    let db = Database::open(Path::new(db_path))?;
-    let consumer = ConsumerAgent::new(config, std::sync::Arc::new(db));
-    println!("Consume: sdef={}, output={}, language={}", sdef, output, language);
-    println!("Consumer agent created: {}", consumer.agent_id());
+    let consumer = ConsumerAgent::new(config, db.clone());
+    let rt = tokio::runtime::Runtime::new().context("Failed to create runtime")?;
+    rt.block_on(async {
+        println!("Step 3/5: Generating {} code → {}...", language, output);
+        match consumer.generate_code().await {
+            Ok(()) => println!("Step 4/5: Code generation complete!"),
+            Err(e) => eprintln!("Error: {}", e),
+        }
+    });
+
+    // 5. Print completeness report
+    let validator = CompletenessValidator::new(db);
+    match validator.validate("") {
+        Ok(report) => println!("{}", format_report(&report)),
+        Err(_) => {}
+    }
+
     Ok(())
 }
 
@@ -436,11 +459,11 @@ fn build_export_sdef(
     Ok(sdef)
 }
 
-fn import_command(file: &str, db_path: &str) -> Result<()> {
+/// Parse and import an S.DEF file into the database.
+fn import_sdef_file(file: &str, db_path: &str) -> Result<String> {
     let content = std::fs::read_to_string(file)
         .context(format!("Failed to read file: {}", file))?;
 
-    // Determine format from file extension
     let sdef: sdef_core::SoftwareDefinition = if file.ends_with(".yaml") || file.ends_with(".yml") {
         serde_yaml::from_str(&content)
             .context("Failed to parse YAML S.DEF file")?
@@ -452,14 +475,12 @@ fn import_command(file: &str, db_path: &str) -> Result<()> {
     let db = Database::open(Path::new(db_path))?;
     let conn = db.connection();
 
-    // Insert document
     conn.execute(
         "INSERT OR IGNORE INTO sdef_documents (name, version, description, created_at, updated_at)
          VALUES (?1, ?2, ?3, datetime(), datetime())",
         rusqlite::params![sdef.name, sdef.version, sdef.description],
     ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-    // Import data models
     if let Some(models) = &sdef.data_models {
         for model in models {
             conn.execute(
@@ -491,6 +512,11 @@ fn import_command(file: &str, db_path: &str) -> Result<()> {
 
     let model_count = sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0);
     println!("Imported document '{}' with {} data models", sdef.name, model_count);
+    Ok(sdef.name)
+}
+
+fn import_command(file: &str, db_path: &str) -> Result<()> {
+    import_sdef_file(file, db_path)?;
     Ok(())
 }
 
