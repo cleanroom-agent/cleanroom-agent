@@ -8,6 +8,7 @@ pub mod consumer;
 pub mod naming;
 pub mod name_resolution;
 pub mod consistency;
+pub mod completeness;
 pub mod repo_scanner;
 pub mod module_partitioner;
 pub mod dependency_graph;

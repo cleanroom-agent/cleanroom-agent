@@ -58,6 +58,26 @@ pub enum Commands {
         check_type: String,
     },
 
+    /// Export S.DEF document from database to JSON file
+    Export {
+        /// Document name to export
+        #[arg(long)]
+        document: String,
+        /// Output JSON file path
+        #[arg(long, default_value = "./sdef-output/sdef.json")]
+        output: String,
+        /// Output format: json (default) or yaml
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+
+    /// Import S.DEF from JSON file into database
+    Import {
+        /// S.DEF JSON file to import
+        #[arg(long)]
+        file: String,
+    },
+
     /// Database migration
     Migrate {
         #[arg(long, default_value = "up")]
@@ -81,6 +101,12 @@ pub fn run(command: Commands, db_path: &str) -> Result<()> {
         }
         Commands::Inspect { check_type } => {
             inspect_command(&check_type, db_path)
+        }
+        Commands::Export { document, output, format } => {
+            export_command(&document, &output, &format, db_path)
+        }
+        Commands::Import { file } => {
+            import_command(&file, db_path)
         }
         Commands::Migrate { direction } => {
             migrate_command(&direction, db_path)
@@ -275,6 +301,196 @@ fn inspect_command(check_type: &str, db_path: &str) -> Result<()> {
             println!("Unknown check type: {}", check_type);
         }
     }
+    Ok(())
+}
+
+fn export_command(document: &str, output: &str, format: &str, db_path: &str) -> Result<()> {
+    use std::io::Write;
+
+    let db = Database::open(Path::new(db_path))?;
+    let conn = db.connection();
+
+    // Query the SoftwareDefinition from the database
+    let mut stmt = conn.prepare(
+        "SELECT name, version, description FROM sdef_documents WHERE name = ?1"
+    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let (name, version, description): (String, Option<String>, Option<String>) = stmt.query_row(
+        rusqlite::params![document],
+        |row| Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    ).map_err(|e| anyhow::anyhow!("Document '{}' not found: {}", document, e))?;
+
+    drop(stmt);
+
+    // Build the SoftwareDefinition  
+    let sdef = build_export_sdef(&conn, &name, version, description)?;
+
+    // Write output
+    let output_dir = Path::new(output).parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(output_dir)
+        .context("Failed to create output directory")?;
+
+    match format {
+        "yaml" | "yml" => {
+            let yaml = serde_yaml::to_string(&sdef)
+                .context("Failed to serialize YAML")?;
+            let mut file = std::fs::File::create(output)
+                .context("Failed to create output file")?;
+            file.write_all(yaml.as_bytes())?;
+        }
+        _ => {
+            let json = serde_json::to_string_pretty(&sdef)
+                .context("Failed to serialize JSON")?;
+            let mut file = std::fs::File::create(output)
+                .context("Failed to create output file")?;
+            file.write_all(json.as_bytes())?;
+        }
+    }
+
+    println!("Exported document '{}' to {}", document, output);
+    Ok(())
+}
+
+fn build_export_sdef(
+    conn: &rusqlite::Connection,
+    name: &str,
+    version: Option<String>,
+    description: Option<String>,
+) -> Result<sdef_core::SoftwareDefinition> {
+    let mut sdef = sdef_core::SoftwareDefinition::default();
+    sdef.sdef_version = sdef_core::CURRENT_SCHEMA_VERSION.to_string();
+    sdef.name = name.to_string();
+    sdef.version = version;
+    sdef.description = description;
+
+    // Export data models
+    let mut stmt = conn.prepare(
+        "SELECT entity, status, version, description, logical_model FROM data_models WHERE document_name = ?1"
+    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut rows = stmt.query(rusqlite::params![name])
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut models = Vec::new();
+    while let Some(row) = rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
+        let entity: String = row.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let status: Option<String> = row.get(1).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let version: Option<String> = row.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let description: Option<String> = row.get(3).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        // Export attributes
+        let mut attr_stmt = conn.prepare(
+            "SELECT name, attr_type, format, description, required, identity, generated, unique_flag, internal, deprecated
+             FROM data_attributes WHERE document_name = ?1 AND entity = ?2"
+        ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        let mut attr_rows = attr_stmt.query(rusqlite::params![name, &entity])
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        let mut attrs = Vec::new();
+        while let Some(ar) = attr_rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
+            attrs.push(sdef_core::DataAttribute {
+                name: ar.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                attr_type: ar.get(1).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                format: ar.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                description: ar.get(3).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                required: ar.get(4).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                default: None,
+                identity: ar.get(5).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                generated: ar.get(6).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                unique: ar.get(7).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                internal: ar.get(8).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                deprecated: ar.get(9).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                compatibility: None,
+                constraints: None,
+            });
+        }
+        drop(attr_rows);
+        drop(attr_stmt);
+
+        models.push(sdef_core::DataModel {
+            entity,
+            status,
+            version,
+            deprecated: None,
+            description,
+            logical_model: None,
+            attributes: if attrs.is_empty() { None } else { Some(attrs) },
+            relationships: None,
+            validation_rules: None,
+            physical_design: None,
+        });
+    }
+    drop(rows);
+    drop(stmt);
+
+    if !models.is_empty() {
+        sdef.data_models = Some(models);
+    }
+
+    println!("Exported {} data models", sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0));
+    Ok(sdef)
+}
+
+fn import_command(file: &str, db_path: &str) -> Result<()> {
+    let content = std::fs::read_to_string(file)
+        .context(format!("Failed to read file: {}", file))?;
+
+    // Determine format from file extension
+    let sdef: sdef_core::SoftwareDefinition = if file.ends_with(".yaml") || file.ends_with(".yml") {
+        serde_yaml::from_str(&content)
+            .context("Failed to parse YAML S.DEF file")?
+    } else {
+        serde_json::from_str(&content)
+            .context("Failed to parse JSON S.DEF file")?
+    };
+
+    let db = Database::open(Path::new(db_path))?;
+    let conn = db.connection();
+
+    // Insert document
+    conn.execute(
+        "INSERT OR IGNORE INTO sdef_documents (name, version, description, created_at, updated_at)
+         VALUES (?1, ?2, ?3, datetime(), datetime())",
+        rusqlite::params![sdef.name, sdef.version, sdef.description],
+    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    // Import data models
+    if let Some(models) = &sdef.data_models {
+        for model in models {
+            conn.execute(
+                "INSERT OR IGNORE INTO data_models (entity, document_name, status, version, description)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    model.entity, sdef.name,
+                    model.status.clone().unwrap_or_else(|| "active".to_string()),
+                    model.version, model.description,
+                ],
+            ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+            if let Some(attrs) = &model.attributes {
+                for attr in attrs {
+                    conn.execute(
+                        "INSERT INTO data_attributes (document_name, entity, name, attr_type, format, description,
+                         required, identity, generated, unique_flag, internal, deprecated)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                        rusqlite::params![
+                            sdef.name, model.entity, attr.name, attr.attr_type, attr.format,
+                            attr.description, attr.required, attr.identity, attr.generated,
+                            attr.unique, attr.internal, attr.deprecated,
+                        ],
+                    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                }
+            }
+        }
+    }
+
+    let model_count = sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0);
+    println!("Imported document '{}' with {} data models", sdef.name, model_count);
     Ok(())
 }
 

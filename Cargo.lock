@@ -462,10 +462,15 @@ name = "cleanroom-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "cleanroom-agent",
  "cleanroom-db",
  "cleanroom-mcp",
+ "rusqlite",
+ "sdef-core",
+ "serde_json",
+ "serde_yaml",
  "tokio",
  "tracing",
  "tracing-subscriber",
