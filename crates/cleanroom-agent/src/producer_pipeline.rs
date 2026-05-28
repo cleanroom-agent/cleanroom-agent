@@ -144,7 +144,7 @@ fn build_dependency_graph(files: &[SourceFile], modules: &[crate::module_partiti
                 .filter_map(|s| s.to_str())
                 .collect();
 
-            if files_i.iter().any(|a| files_j.contains(a)) {
+            if files_i.iter().any(|a| files_j.iter().any(|b| b == a)) {
                 graph.add_edge(
                     &format!("module:{}", modules[i].name),
                     &format!("module:{}", modules[j].name),

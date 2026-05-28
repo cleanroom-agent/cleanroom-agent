@@ -23,6 +23,8 @@ pub mod ir_to_sdef;
 pub mod producer_pipeline;
 pub mod two_phase_commit;
 pub mod scheduler;
+pub mod test_extractor;
+pub mod compat_detector;
 
 pub use orchestrator::{Orchestrator, OrchestratorConfig};
 pub use producer::{ProducerAgent, ProducerConfig};
@@ -41,3 +43,5 @@ pub use absorb_human_changes::{HumanChangeAbsorber, AbsorbResult, HumanChange, C
 pub use consistency_checker::{ConsistencyChecker, ConsistencyCheckerConfig};
 pub use code_merger::{CodeMerger, MergeConfig, MergeResult, CodeFragment, MergeConflict};
 pub use scheduler::{Scheduler, TaskPlan, ProgressSummary};
+pub use test_extractor::{extract_tests, build_test_contract, persist_test_contract, ExtractionResult};
+pub use compat_detector::{CompatDetector, DetectionResult, CompatPattern, CompatCategory, build_compat_module};
