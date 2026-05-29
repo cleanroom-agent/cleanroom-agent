@@ -138,9 +138,10 @@ impl Database {
         db.configure()?;
         let conn = db.conn.lock().unwrap();
         let combined = format!(
-            "{}\n{}",
+            "{}\n{}\n{}",
             crate::embedded_schema::INITIAL_SCHEMA_SQL,
             include_str!("../../../migrations/002_sdef_storage.sql"),
+            include_str!("../../../migrations/003_unique_constraints.sql"),
         );
         conn.execute_batch(&combined)
             .map_err(|e| DbError::MigrationFailed(e.to_string()))?;

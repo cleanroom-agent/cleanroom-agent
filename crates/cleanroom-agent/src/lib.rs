@@ -1,6 +1,6 @@
 //! cleanroom-agent — Agent core logic for Cleanroom.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod agent;
 pub mod orchestrator;

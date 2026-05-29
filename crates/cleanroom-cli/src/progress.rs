@@ -1,5 +1,7 @@
 //! Progress bar and output formatting utilities for CLI.
 
+#![allow(dead_code)]
+
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 use std::time::Duration;
 

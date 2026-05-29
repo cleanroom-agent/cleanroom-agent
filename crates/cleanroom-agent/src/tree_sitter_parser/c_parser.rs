@@ -5,7 +5,7 @@
 
 use tree_sitter::Node;
 
-use crate::ir_to_sdef::{IrEntity, IrAttribute, IrMethod, IrParam};
+use crate::ir_to_sdef::{IrEntity, IrAttribute, IrParam};
 
 /// Extract all top-level definitions from a C translation unit.
 pub fn extract_c_declarations(

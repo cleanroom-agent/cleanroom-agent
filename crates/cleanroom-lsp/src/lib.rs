@@ -1,6 +1,7 @@
 //! cleanroom-lsp — LSP client for Cleanroom Agent.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
+#![allow(dead_code)]
 
 pub mod client;
 pub mod error;

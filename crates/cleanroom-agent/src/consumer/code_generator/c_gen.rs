@@ -141,7 +141,7 @@ impl CodeGenerator for CGenerator {
         }]
     }
 
-    fn generate_class(&self, class: &ClassContract) -> Vec<GeneratedCode> {
+    fn generate_class(&self, _class: &ClassContract) -> Vec<GeneratedCode> {
         vec![]
     }
 

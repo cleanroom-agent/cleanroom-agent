@@ -289,23 +289,64 @@ fn to_snake_case(s: &str) -> String {
 }
 
 fn rust_type(sdef_type: &str, required: bool) -> String {
-    let base = match sdef_type.to_lowercase().as_str() {
-        "string" | "text" | "varchar" => "String",
-        "integer" | "int" | "int32" => "i32",
-        "int64" | "bigint" => "i64",
-        "float" | "decimal" | "double" => "f64",
-        "boolean" | "bool" => "bool",
-        "uuid" => "uuid::Uuid",
-        "timestamp" | "datetime" => "chrono::DateTime<chrono::Utc>",
-        "date" => "chrono::NaiveDate",
-        "json" | "jsonb" => "serde_json::Value",
-        "bytes" | "bytea" => "Vec<u8>",
-        "any" => "serde_json::Value",
-        _ => "String",
+    let lower = sdef_type.to_lowercase();
+    let trimmed = lower.trim();
+
+    let base = if trimmed.ends_with('*') && !trimmed.contains('(') {
+        // Pointer types: strip trailing asterisk
+        let inner = trimmed.trim_end_matches('*').trim();
+        let inner_rust = rust_type(inner, true);
+        if inner_rust == "String" || inner_rust == "i8" {
+            "String".to_string()
+        } else {
+            format!("Box<{}>", inner_rust)
+        }
+    } else {
+        let s = match trimmed {
+            // String types
+            "string" | "text" | "varchar" | "sds" => "String",
+            "char" => "i8",
+            "unsigned char" => "u8",
+            // Signed integers
+            "integer" | "int" | "int32" => "i32",
+            "int8" | "signed char" => "i8",
+            "int16" | "short" | "short int" => "i16",
+            "int64" | "bigint" | "long" | "long int" | "long long" | "long long int" => "i64",
+            // Unsigned integers
+            "uint" | "unsigned" | "unsigned int" => "u32",
+            "uint8" => "u8",
+            "uint16" | "unsigned short" | "unsigned short int" => "u16",
+            "uint32" => "u32",
+            "uint64" | "unsigned long" | "unsigned long int" | "u64" | "unsigned long long" | "unsigned long long int" => "u64",
+            "size_t" | "usize" => "usize",
+            // Floating point
+            "float" => "f32",
+            "double" | "long double" | "decimal" => "f64",
+            // Boolean
+            "boolean" | "bool" => "bool",
+            // UUID
+            "uuid" => "uuid::Uuid",
+            // Time
+            "timestamp" | "datetime" => "chrono::DateTime<chrono::Utc>",
+            "date" => "chrono::NaiveDate",
+            "time_t" => "i64",
+            // Complex types
+            "json" | "jsonb" => "serde_json::Value",
+            "bytes" | "bytea" => "Vec<u8>",
+            "void" => "()",
+            "any" => "serde_json::Value",
+            // Everything else: treat as a named type reference (PascalCase)
+            other => {
+                let pascal = to_pascal_case(other);
+                // Return boxed type reference since we need a uniform type
+                return pascal;
+            }
+        };
+        s.to_string()
     };
-    
+
     if required {
-        base.to_string()
+        base
     } else {
         format!("Option<{}>", base)
     }

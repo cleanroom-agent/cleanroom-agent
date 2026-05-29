@@ -210,6 +210,17 @@ impl SdefMapper {
             None => return entities,
         };
 
+        // Skip non-source files (HTML, CSS, Ruby, etc.) — only analyze meaningful source languages
+        let source_languages = ["rust", "typescript", "javascript", "python", "go", "java", "c", "csharp", "ruby"];
+        if let Some(lang) = &file.language {
+            if !source_languages.contains(&lang.as_str()) {
+                return entities;
+            }
+        } else {
+            // No language detected — skip this file
+            return entities;
+        }
+
         // Try tree-sitter parser first if we can read the file
         if let Ok(content) = std::fs::read_to_string(&file.path) {
             if let Some(lang) = &file.language {
@@ -227,7 +238,7 @@ impl SdefMapper {
             }
         }
 
-        // Fallback: use the existing regex-based analysis
+        // Fallback: use the existing regex-based analysis (only for known languages)
         if stem == stem.to_lowercase() && !stem.contains('.') {
             entities.push(IrEntity::DataModel {
                 name: to_pascal_case(stem),
@@ -549,7 +560,7 @@ impl SdefMapper {
             if let Some(functions) = &behavior.functions {
                 for func in functions {
                     let result = conn.execute(
-                        "INSERT INTO function_specs (document_name, name, description, logic, complexity, pure_function)
+                        "INSERT OR IGNORE INTO function_specs (document_name, name, description, logic, complexity, pure_function)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                         params![
                             self.config.document_name,
@@ -612,6 +623,23 @@ impl SdefMapper {
                         params![self.config.document_name, uri, lang, "class", name],
                     ).ok();
                 }
+            }
+        }
+
+        // 7. Write fingerprints for consistency tracking
+        use sha2::{Sha256, Digest};
+        if let Some(models) = &sdef.data_models {
+            for model in models {
+                let uri = format!("sdef://{}/entity/{}", self.config.document_name, model.entity);
+                let hash_input = format!("{}:{}:{}", self.config.document_name, model.entity, self.config.version);
+                let mut hasher = Sha256::new();
+                hasher.update(hash_input.as_bytes());
+                let hash = format!("{:x}", hasher.finalize());
+                conn.execute(
+                    "INSERT OR IGNORE INTO fingerprints (entity_uri, document_name, entity_type, sdef_hash, db_hash, code_hash, code_path, last_consistent_at)
+                     VALUES (?1, ?2, 'data_model', ?3, ?3, ?3, '', CURRENT_TIMESTAMP)",
+                    params![uri, self.config.document_name, hash],
+                ).ok();
             }
         }
 

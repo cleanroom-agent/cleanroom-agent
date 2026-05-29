@@ -33,9 +33,10 @@ impl Default for ProducerConfig {
 }
 
 /// Producer Agent — analyzes code repositories.
+#[allow(dead_code)]
 pub struct ProducerAgent {
     /// Configuration.
-    config: ProducerConfig,
+    pub(crate) config: ProducerConfig,
     /// Database connection.
     db: Arc<Database>,
     /// Agent ID.

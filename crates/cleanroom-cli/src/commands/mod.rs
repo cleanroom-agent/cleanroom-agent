@@ -8,7 +8,7 @@ use anyhow::{Result, Context};
 use clap::Subcommand;
 use cleanroom_agent::{
     AgentConfig, CleanroomAgent, RunMode,
-    CompatibilityMode, Fidelity, CompatibilityResolver, CompletenessValidator, format_report,
+    CompatibilityMode, Fidelity, CompletenessValidator, format_report,
     VersionUpgradeAnalyzer,
 };
 use cleanroom_db::Database;
@@ -304,8 +304,8 @@ fn inspect_command(check_type: &str, db_path: &str) -> Result<()> {
             let models: i64 = conn.query_row("SELECT COUNT(*) FROM data_models", [], |r| r.get(0)).unwrap_or(0);
             let attrs: i64 = conn.query_row("SELECT COUNT(*) FROM data_attributes", [], |r| r.get(0)).unwrap_or(0);
             let contracts: i64 = conn.query_row("SELECT COUNT(*) FROM contracts", [], |r| r.get(0)).unwrap_or(0);
-            let functions: i64 = conn.query_row("SELECT COUNT(*) FROM function_specs", [], |r| r.get(0)).unwrap_or(0);
-            let symbols: i64 = conn.query_row("SELECT COUNT(*) FROM symbol_registry", [], |r| r.get(0)).unwrap_or(0);
+            let functions: i64 = conn.query_row("SELECT COUNT(DISTINCT document_name || '|' || name) FROM function_specs", [], |r| r.get(0)).unwrap_or(0);
+            let symbols: i64 = conn.query_row("SELECT COUNT(DISTINCT document_name || '|' || sdef_uri || '|' || language) FROM symbol_registry", [], |r| r.get(0)).unwrap_or(0);
 
             println!("{}", tr_global!("cli.inspect_coverage"));
             println!("{}", tr_global!("cli.inspect_data_models", models));
@@ -705,9 +705,7 @@ fn import_sdef_file(file: &str, db_path: &str) -> Result<String> {
             .context(tr_global!("cli.import_fail_parse_json"))?
     };
 
-    let db = Database::open(Path::new(db_path))?;
-    let conn = db.connection();
-
+    let _db = Database::open(Path::new(db_path))?;
     // Use the export_import importer for full data model + contract import
     let importer = cleanroom_db::export_import::SdefImporter::new(
         rusqlite::Connection::open(db_path)?,
@@ -745,7 +743,7 @@ fn upgrade_command(
     document: Option<&str>, apply: bool, db_path: &str,
 ) -> Result<()> {
     let db = Arc::new(Database::open(Path::new(db_path))?);
-    let doc_name = document.unwrap_or("default");
+    let _doc_name = document.unwrap_or("default");
 
     println!("{}", tr_global!("cli.upgrade_running", old_version, new_version));
 
