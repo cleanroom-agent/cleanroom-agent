@@ -23,7 +23,9 @@ use cleanroom_db::{
     FingerprintRepository,
     SdefRepository,
 };
-use cleanroom_db::repositories::{CheckpointRepository, Checkpoint};
+use cleanroom_db::repositories::{
+    Checkpoint, CheckpointRepository, ShardRepository, Shard,
+};
 use cleanroom_lsp::LspServerPool;
 
 fn tr(key: &str) -> String {
@@ -56,7 +58,20 @@ impl CleanroomMcpServer {
     }
 
     /// Start the server over stdio transport.
+    /// Also spawns a background consistency checker loop.
     pub async fn serve(self) -> Result<(), ErrorData> {
+        // Spawn background consistency checker
+        let checker_db = self.db.clone();
+        let checker_config = cleanroom_agent::consistency_checker::ConsistencyCheckerConfig {
+            interval: std::time::Duration::from_secs(300),
+            document_names: vec![], // populated as documents are created
+            auto_fix: false,
+        };
+        let checker = cleanroom_agent::consistency_checker::ConsistencyChecker::new(
+            checker_db, checker_config,
+        );
+        checker.run_loop(); // Start in background
+
         let transport = (tokio::io::stdin(), tokio::io::stdout());
         let _running = serve_server(self, transport).await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
@@ -96,6 +111,10 @@ impl CleanroomMcpServer {
         CheckpointRepository::new(self.new_conn())
     }
 
+    fn shard_repo(&self) -> ShardRepository {
+        ShardRepository::new(self.new_conn())
+    }
+
     fn exporter(&self) -> cleanroom_db::export_import::SdefExporter {
         cleanroom_db::export_import::SdefExporter::new(self.new_conn())
     }
@@ -123,6 +142,22 @@ impl CleanroomMcpServer {
             "last_heartbeat": task.last_heartbeat,
             "dependencies": serde_json::from_str::<Vec<String>>(&task.dependencies_json).unwrap_or_default(),
             "version": task.version,
+        })
+    }
+
+    fn shard_to_json(&self, shard: &Shard) -> Value {
+        json!({
+            "shard_id": shard.shard_id,
+            "document_name": shard.document_name,
+            "sdef_uri": shard.sdef_uri,
+            "section_type": shard.section_type,
+            "file_path": shard.file_path,
+            "status": shard.status.as_str(),
+            "content_hash": shard.content_hash,
+            "token_estimate": shard.token_estimate,
+            "version": shard.version,
+            "created_at": shard.created_at,
+            "updated_at": shard.updated_at,
         })
     }
 
@@ -222,7 +257,8 @@ impl CleanroomMcpServer {
             "get_ui_screen" => self.handle_get_ui_screen(args_value),
             "list_documents" => self.handle_list_documents(args_value),
             "search_sdef" => self.handle_search_sdef(args_value),
-            "get_dependency_graph" => self.handle_list_documents(args_value),
+            "get_dependency_graph" => self.handle_get_dependency_graph(args_value),
+            "list_shards" => self.handle_list_shards(args_value),
             // Naming
             "resolve_name" => self.handle_resolve_name(args_value),
             "batch_resolve_names" => self.handle_batch_resolve(args_value),
@@ -231,6 +267,8 @@ impl CleanroomMcpServer {
             // Import/Export
             "export_sdef" => self.handle_export_sdef(args_value),
             "import_sdef" => self.handle_import_sdef(args_value),
+            "export_shard" => self.handle_export_shard(args_value),
+            "import_shard" => self.handle_import_shard(args_value),
             // Checkpoint
             "create_checkpoint" => self.handle_create_checkpoint(args_value),
             "list_checkpoints" => self.handle_list_checkpoints(args_value),
@@ -443,26 +481,118 @@ impl CleanroomMcpServer {
         }))
     }
 
+    fn handle_get_dependency_graph(&self, args: Value) -> Result<Value, String> {
+        #[derive(serde::Deserialize)]
+        struct P { document_name: String }
+        let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let conn = self.new_conn();
+
+        // Query contracts for dependency info
+        let mut stmt = conn.prepare(
+            "SELECT name, contract_type, dependencies_json FROM contracts WHERE document_name = ?1"
+        ).map_err(|e| e.to_string())?;
+        let edges: Vec<Value> = stmt.query_map([&p.document_name], |row| {
+            let name: String = row.get(0)?;
+            let deps: Option<String> = row.get(2)?;
+            Ok((name, deps))
+        }).map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .filter_map(|(name, deps)| {
+            deps.and_then(|d| serde_json::from_str::<Vec<String>>(&d).ok())
+                .map(|deps| (name, deps))
+        })
+        .flat_map(|(name, deps)| {
+            deps.into_iter().map(move |dep| json!({
+                "from": name, "to": dep, "kind": "import"
+            }))
+        })
+        .collect();
+        drop(stmt);
+
+        // Also query data_relationships for entity dependencies
+        let mut rel_stmt = conn.prepare(
+            "SELECT entity, target, kind FROM data_relationships WHERE document_name = ?1"
+        ).map_err(|e| e.to_string())?;
+        let rel_edges: Vec<Value> = rel_stmt.query_map([&p.document_name], |row| {
+            Ok(json!({
+                "from": row.get::<_, String>(0)?,
+                "to": row.get::<_, String>(1)?,
+                "kind": format!("data_{}", row.get::<_, String>(2)?),
+            }))
+        }).map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        let mut all_edges = edges;
+        all_edges.extend(rel_edges);
+
+        Ok(json!({
+            "document_name": p.document_name,
+            "edges": all_edges,
+            "edge_count": all_edges.len(),
+        }))
+    }
+
+    fn handle_list_shards(&self, args: Value) -> Result<Value, String> {
+        #[derive(serde::Deserialize)]
+        struct P { document_name: String, section_type: Option<String>, status: Option<String> }
+        let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let repo = self.shard_repo();
+
+        let shards = if let Some(ref sec_type) = p.section_type {
+            repo.list_by_document(&p.document_name)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .filter(|s| s.section_type == *sec_type)
+                .filter(|s| p.status.as_ref().map_or(true, |st| s.status.as_str() == st))
+                .collect::<Vec<_>>()
+        } else {
+            repo.list_by_document(&p.document_name)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .filter(|s| p.status.as_ref().map_or(true, |st| s.status.as_str() == st))
+                .collect::<Vec<_>>()
+        };
+
+        Ok(json!(shards.iter().map(|s| self.shard_to_json(s)).collect::<Vec<_>>()))
+    }
+
     // ============ Naming Service Tool Handlers ============
 
     fn handle_resolve_name(&self, args: Value) -> Result<Value, String> {
         #[derive(serde::Deserialize)]
-        struct P { document_name: String, sdef_uri: String, language: String }
+        struct P { document_name: String, sdef_uri: String, language: String, symbol_type: String }
         let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        match self.symbol_repo().resolve(&p.document_name, &p.sdef_uri, &p.language)
-            .map_err(|e| e.to_string())?
-        {
-            Some(name) => Ok(json!({"name": name, "found": true})),
-            None => Ok(json!({"name": null, "found": false})),
+        let st = SymbolType::from_str(&p.symbol_type)
+            .ok_or_else(|| format!("Unknown symbol_type '{}'. Valid: class, interface, function, variable, constant, enum, type", p.symbol_type))?;
+
+        // Try existing first
+        if let Ok(Some(name)) = self.symbol_repo().resolve(&p.document_name, &p.sdef_uri, &p.language) {
+            return Ok(json!({"name": name, "found": true, "is_new": false}));
+        }
+
+        // Auto-generate: use NameResolutionService
+        let ns = cleanroom_agent::NameResolutionService::new(self.db.clone());
+        match ns.resolve(&p.document_name, &p.sdef_uri, &p.language, st) {
+            Ok(result) => Ok(json!({
+                "name": result.concrete_name,
+                "found": !result.is_new,
+                "is_new": result.is_new,
+            })),
+            Err(e) => Err(e.to_string()),
         }
     }
 
     fn handle_batch_resolve(&self, args: Value) -> Result<Value, String> {
         #[derive(serde::Deserialize)]
-        struct P { document_name: String, uris: Vec<String>, language: String }
+        struct P { document_name: String, uris: Vec<String>, language: String, symbol_type: Option<String> }
         let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let default_st = SymbolType::Variable;
+        let st = p.symbol_type.as_ref()
+            .and_then(|s| SymbolType::from_str(s))
+            .unwrap_or(default_st);
         let uri_refs: Vec<(&str, SymbolType)> = p.uris.iter()
-            .map(|u| (u.as_str(), SymbolType::Variable)).collect();
+            .map(|u| (u.as_str(), st)).collect();
         let results = self.symbol_repo()
             .batch_resolve(&p.document_name, &uri_refs, &p.language)
             .map_err(|e| e.to_string())?;
@@ -527,6 +657,23 @@ impl CleanroomMcpServer {
         Ok(json!({"document_name": doc_name, "ok": true}))
     }
 
+    fn handle_export_shard(&self, args: Value) -> Result<Value, String> {
+        #[derive(serde::Deserialize)]
+        struct P { sdef_uri: String }
+        let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let content = self.exporter().export_shard(&p.sdef_uri).map_err(|e| e.to_string())?;
+        Ok(json!({"sdef_uri": p.sdef_uri, "content_hash": content}))
+    }
+
+    fn handle_import_shard(&self, args: Value) -> Result<Value, String> {
+        #[derive(serde::Deserialize)]
+        struct P { shard_id: String, document_name: String, sdef_uri: String, section_type: String, content_json: String }
+        let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        self.importer().import_shard(&p.shard_id, &p.document_name, &p.sdef_uri, &p.section_type, &p.content_json)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({"ok": true, "shard_id": p.shard_id}))
+    }
+
     // ============ Checkpoint Tool Handlers ============
 
     fn handle_create_checkpoint(&self, args: Value) -> Result<Value, String> {
@@ -534,15 +681,62 @@ impl CleanroomMcpServer {
         struct P { document_name: String, description: Option<String> }
         let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
         let repo = self.checkpoint_repo();
+        let conn = self.new_conn();
+
+        // Capture task snapshot
+        let tasks_json: Value = if let Ok(mut stmt) = conn.prepare(
+            "SELECT task_id, task_type, status, priority, input_json, error_message, assigned_to, progress, retry_count, max_retries, dependencies_json
+             FROM tasks"
+        ) {
+            let tasks: Vec<Value> = stmt.query_map([], |row| {
+                Ok(json!({
+                    "task_id": row.get::<_, String>(0)?,
+                    "task_type": row.get::<_, String>(1)?,
+                    "status": row.get::<_, String>(2)?,
+                    "priority": row.get::<_, i32>(3)?,
+                    "input_json": row.get::<_, String>(4)?,
+                    "error_message": row.get::<_, Option<String>>(5)?,
+                    "assigned_to": row.get::<_, Option<String>>(6)?,
+                    "progress": row.get::<_, f64>(7)?,
+                    "retry_count": row.get::<_, i32>(8)?,
+                    "max_retries": row.get::<_, i32>(9)?,
+                    "dependencies_json": row.get::<_, String>(10)?,
+                }))
+            }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+            json!(tasks)
+        } else {
+            json!([])
+        };
+
+        // Capture shard snapshot
+        let shards_json: Value = {
+            let shard_repo = self.shard_repo();
+            let shards = shard_repo.list_by_document(&p.document_name).unwrap_or_default();
+            json!(shards.iter().map(|s| json!({
+                "shard_id": s.shard_id,
+                "sdef_uri": s.sdef_uri,
+                "section_type": s.section_type,
+                "status": s.status.as_str(),
+                "file_path": s.file_path,
+                "content_hash": s.content_hash,
+                "token_estimate": s.token_estimate,
+            })).collect::<Vec<_>>())
+        };
+
         let cp = Checkpoint {
             checkpoint_id: uuid::Uuid::new_v4().to_string(),
-            document_name: p.document_name, description: p.description,
+            document_name: p.document_name,
+            description: p.description,
             created_at: String::new(),
-            task_snapshot_json: "{}".to_string(),
-            shard_snapshot_json: "{}".to_string(),
+            task_snapshot_json: tasks_json.to_string(),
+            shard_snapshot_json: shards_json.to_string(),
         };
         repo.create(&cp).map_err(|e| e.to_string())?;
-        Ok(json!({"checkpoint_id": cp.checkpoint_id}))
+        Ok(json!({
+            "checkpoint_id": cp.checkpoint_id,
+            "task_count": tasks_json.as_array().map(|a| a.len()).unwrap_or(0),
+            "shard_count": shards_json.as_array().map(|a| a.len()).unwrap_or(0),
+        }))
     }
 
     fn handle_list_checkpoints(&self, args: Value) -> Result<Value, String> {
@@ -560,8 +754,69 @@ impl CleanroomMcpServer {
     fn handle_restore_checkpoint(&self, args: Value) -> Result<Value, String> {
         #[derive(serde::Deserialize)]
         struct P { checkpoint_id: String }
-        let _p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        Ok(json!({"ok": true}))
+        let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
+
+        let repo = self.checkpoint_repo();
+        let cp = repo.get(&p.checkpoint_id).map_err(|e| e.to_string())?;
+        let conn = self.new_conn();
+
+        // Parse snapshots
+        let tasks: Vec<Value> = serde_json::from_str(&cp.task_snapshot_json).unwrap_or_default();
+        let shards: Vec<Value> = serde_json::from_str(&cp.shard_snapshot_json).unwrap_or_default();
+
+        // Clear current state for this document
+        conn.execute("DELETE FROM tasks", []).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM shards WHERE document_name = ?1", rusqlite::params![cp.document_name])
+            .map_err(|e| e.to_string())?;
+
+        // Restore tasks from snapshot
+        let mut restored_tasks = 0;
+        for t in &tasks {
+            if let (Some(task_id), Some(task_type)) = (
+                t.get("task_id").and_then(|v| v.as_str()),
+                t.get("task_type").and_then(|v| v.as_str()),
+            ) {
+                let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+                let priority = t.get("priority").and_then(|v| v.as_i64()).unwrap_or(5);
+                let input = t.get("input_json").and_then(|v| v.as_str()).unwrap_or("{}");
+                let deps = t.get("dependencies_json").and_then(|v| v.as_str()).unwrap_or("[]");
+                if let Err(e) = conn.execute(
+                    "INSERT OR IGNORE INTO tasks (task_id, task_type, status, priority, input_json, dependencies_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![task_id, task_type, status, priority, input, deps],
+                ) {
+                    tracing::warn!(task_id = %task_id, error = %e, "Failed to restore task");
+                } else {
+                    restored_tasks += 1;
+                }
+            }
+        }
+
+        // Restore shards from snapshot
+        let mut restored_shards = 0;
+        for s in &shards {
+            if let Some(shard_id) = s.get("shard_id").and_then(|v| v.as_str()) {
+                let sdef_uri = s.get("sdef_uri").and_then(|v| v.as_str()).unwrap_or("");
+                let section_type = s.get("section_type").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let status = s.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+                if let Err(e) = conn.execute(
+                    "INSERT OR IGNORE INTO shards (shard_id, document_name, sdef_uri, section_type, status) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![shard_id, cp.document_name, sdef_uri, section_type, status],
+                ) {
+                    tracing::warn!(shard_id = %shard_id, error = %e, "Failed to restore shard");
+                } else {
+                    restored_shards += 1;
+                }
+            }
+        }
+
+        Ok(json!({
+            "ok": true,
+            "checkpoint_id": p.checkpoint_id,
+            "document_name": cp.document_name,
+            "restored_tasks": restored_tasks,
+            "restored_shards": restored_shards,
+            "description": cp.description,
+        }))
     }
 
     // ============ Transaction Tool Handlers ============
@@ -614,12 +869,102 @@ impl CleanroomMcpServer {
     }
 
     fn handle_compute_fingerprints(&self, args: Value) -> Result<Value, String> {
+        use cleanroom_agent::consistency::ConsistencyService;
         #[derive(serde::Deserialize)]
         struct P { document_name: String }
         let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        let count = self.fingerprint_repo()
-            .list_by_document(&p.document_name).map_err(|e| e.to_string())?.len();
-        Ok(json!({"fingerprint_count": count, "document_name": p.document_name}))
+
+        let conn = self.new_conn();
+        let fp_repo = self.fingerprint_repo();
+        let mut count = 0i64;
+
+        // Compute fingerprints for data models
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT entity, description FROM data_models WHERE document_name = ?1"
+        ) {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![&p.document_name], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            }) {
+                for row in rows.flatten() {
+                    let (entity, description) = row;
+                    let entity_uri = format!("sdef://{}/data-models/{}", p.document_name, entity);
+                    let content = serde_json::json!({"entity": entity, "description": description}).to_string();
+                    let hash = ConsistencyService::compute_hash(&content);
+                    fp_repo.upsert(&cleanroom_db::Fingerprint {
+                        entity_uri: entity_uri.clone(),
+                        document_name: p.document_name.clone(),
+                        entity_type: "data_model".to_string(),
+                        sdef_hash: Some(hash.clone()),
+                        db_hash: Some(hash),
+                        code_hash: None,
+                        code_path: None,
+                        last_checked_at: String::new(),
+                        last_consistent_at: None,
+                    }).ok();
+                    count += 1;
+                }
+            }
+        }
+
+        // Compute fingerprints for contracts
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT name, contract_type FROM contracts WHERE document_name = ?1"
+        ) {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![&p.document_name], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }) {
+                for row in rows.flatten() {
+                    let (name, ctype) = row;
+                    let entity_uri = format!("sdef://{}/contracts/{}/{}", p.document_name, ctype, name);
+                    let content = serde_json::json!({"name": name, "contract_type": ctype}).to_string();
+                    let hash = ConsistencyService::compute_hash(&content);
+                    fp_repo.upsert(&cleanroom_db::Fingerprint {
+                        entity_uri: entity_uri.clone(),
+                        document_name: p.document_name.clone(),
+                        entity_type: "contract".to_string(),
+                        sdef_hash: Some(hash.clone()),
+                        db_hash: Some(hash),
+                        code_hash: None,
+                        code_path: None,
+                        last_checked_at: String::new(),
+                        last_consistent_at: None,
+                    }).ok();
+                    count += 1;
+                }
+            }
+        }
+
+        // Compute fingerprints for function specs
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT name FROM function_specs WHERE document_name = ?1"
+        ) {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![&p.document_name], |row| {
+                row.get::<_, String>(0)
+            }) {
+                for name in rows.flatten() {
+                    let entity_uri = format!("sdef://{}/behavior/functions/{}", p.document_name, name);
+                    let hash = ConsistencyService::compute_hash(&name);
+                    fp_repo.upsert(&cleanroom_db::Fingerprint {
+                        entity_uri: entity_uri.clone(),
+                        document_name: p.document_name.clone(),
+                        entity_type: "function".to_string(),
+                        sdef_hash: Some(hash.clone()),
+                        db_hash: Some(hash),
+                        code_hash: None,
+                        code_path: None,
+                        last_checked_at: String::new(),
+                        last_consistent_at: None,
+                    }).ok();
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(json!({
+            "fingerprint_count": count,
+            "document_name": p.document_name,
+            "ok": true,
+        }))
     }
 
     // ============ LSP Tool Handlers ============
@@ -696,19 +1041,22 @@ impl CleanroomMcpServer {
 
     fn handle_resolve_inconsistency(&self, args: Value) -> Result<Value, String> {
         use tools::consistency_tools::ResolveInconsistencyParams;
+        use cleanroom_agent::consistency::{ConsistencyService, FixStrategy, Inconsistency};
         let p: ResolveInconsistencyParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        // Validate strategy
-        let valid_strategies = [
-            "sync_code_to_sdef", "regenerate_code", "sync_db_to_sdef",
-            "sync_sdef_to_db", "accept_external",
-        ];
-        if !valid_strategies.contains(&p.strategy.as_str()) {
-            return Err(format!(
-                "Invalid strategy '{}'. Valid: {}",
-                p.strategy,
-                valid_strategies.join(", ")
-            ));
-        }
+
+        // Parse strategy
+        let strategy = match p.strategy.as_str() {
+            "sync_code_to_sdef" => FixStrategy::SyncCodeToSdef,
+            "regenerate_code" => FixStrategy::RegenerateCode,
+            "sync_db_to_sdef" => FixStrategy::SyncDbToSdef,
+            "sync_sdef_to_db" => FixStrategy::SyncSdefToDb,
+            "accept_external" => FixStrategy::AcceptExternal,
+            _ => return Err(format!(
+                "Invalid strategy '{}'. Valid: sync_code_to_sdef, regenerate_code, sync_db_to_sdef, sync_sdef_to_db, accept_external",
+                p.strategy
+            )),
+        };
+
         let repo = self.fingerprint_repo();
         let fingerprints = repo.list_by_document(&p.document_name)
             .map_err(|e| e.to_string())?;
@@ -716,6 +1064,36 @@ impl CleanroomMcpServer {
         let entity_found = fingerprints.iter().any(|f| f.entity_uri == p.entity_uri);
         if !entity_found {
             return Err(format!("Entity '{}' not found in document '{}'", p.entity_uri, p.document_name));
+        }
+
+        // Delegate to ConsistencyService
+        let service = ConsistencyService::new(self.db.clone());
+        let inc = Inconsistency {
+            entity_uri: p.entity_uri.clone(),
+            sdef_hash: None,
+            db_hash: None,
+            code_hash: None,
+        };
+        if let Err(e) = service.fix(&inc, strategy) {
+            return Err(format!("Fix failed: {}", e));
+        }
+
+        // Update fingerprint to mark consistent
+        for fp in &fingerprints {
+            if fp.entity_uri == p.entity_uri {
+                let _ = repo.upsert(&cleanroom_db::Fingerprint {
+                    entity_uri: fp.entity_uri.clone(),
+                    document_name: fp.document_name.clone(),
+                    entity_type: fp.entity_type.clone(),
+                    sdef_hash: fp.sdef_hash.clone(),
+                    db_hash: fp.db_hash.clone(),
+                    code_hash: fp.code_hash.clone(),
+                    code_path: fp.code_path.clone(),
+                    last_checked_at: String::new(),
+                    last_consistent_at: Some(chrono::Utc::now().to_rfc3339()),
+                });
+                break;
+            }
         }
 
         Ok(json!({
@@ -867,7 +1245,8 @@ fn all_tools() -> Vec<Tool> {
         make_tool::<GetUiScreenParams>("get_ui_screen", "mcp.get_ui_screen", true),
         make_tool::<ListDocumentsParams>("list_documents", "mcp.list_documents", true),
         make_tool::<SearchSdefParams>("search_sdef", "mcp.search_sdef", true),
-        make_tool::<GetDataModelParams>("get_dependency_graph", "mcp.get_dependency_graph", true),
+        make_tool::<ListShardsParams>("get_dependency_graph", "mcp.get_dependency_graph", true),
+        make_tool::<ListShardsParams>("list_shards", "mcp.list_shards", true),
 
         // Naming Service
         make_tool::<ResolveNameParams>("resolve_name", "mcp.resolve_name", true),
@@ -878,6 +1257,8 @@ fn all_tools() -> Vec<Tool> {
         // Import/Export
         make_tool::<ExportSdefParams>("export_sdef", "mcp.export_sdef", true),
         make_tool::<ImportSdefParams>("import_sdef", "mcp.import_sdef", false),
+        make_tool::<ExportShardParams>("export_shard", "mcp.export_shard", true),
+        make_tool::<ImportShardParams>("import_shard", "mcp.import_shard", false),
 
         // Checkpoint
         make_tool::<CheckpointParams>("create_checkpoint", "mcp.create_checkpoint", false),
@@ -885,9 +1266,9 @@ fn all_tools() -> Vec<Tool> {
         make_tool::<CheckpointIdParams>("restore_checkpoint", "mcp.restore_checkpoint", false),
 
         // Transaction
-        make_tool::<CreateTaskParams>("begin_transaction", "mcp.begin_transaction", false),
-        make_tool::<CreateTaskParams>("commit_transaction", "mcp.commit_transaction", false),
-        make_tool::<CreateTaskParams>("rollback_transaction", "mcp.rollback_transaction", false),
+        make_tool::<CheckpointParams>("begin_transaction", "mcp.begin_transaction", false),
+        make_tool::<TransactionIdParams>("commit_transaction", "mcp.commit_transaction", false),
+        make_tool::<TransactionIdParams>("rollback_transaction", "mcp.rollback_transaction", false),
 
         // Consistency
         make_tool::<ConsistencyCheckParams>("check_consistency", "mcp.check_consistency", true),

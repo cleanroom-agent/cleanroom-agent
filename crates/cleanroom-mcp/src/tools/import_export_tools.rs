@@ -47,3 +47,9 @@ pub struct CheckpointParams {
 pub struct CheckpointIdParams {
     pub checkpoint_id: String,
 }
+
+/// Transaction ID parameters (for commit/rollback).
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TransactionIdParams {
+    pub transaction_id: String,
+}

@@ -2,6 +2,7 @@
 
 #![warn(missing_docs)]
 
+pub mod agent;
 pub mod orchestrator;
 pub mod producer;
 pub mod consumer;
@@ -28,6 +29,7 @@ pub mod compat_detector;
 pub mod design_decisions;
 pub mod tree_sitter_parser;
 
+pub use agent::{CleanroomAgent, AgentConfig, RunMode};
 pub use naming::{DeterministicNames, Language, NameStyle, NamespaceMode};
 pub use name_resolution::{NameResolutionService, ResolvedName};
 pub use orchestrator::{Orchestrator, OrchestratorConfig};

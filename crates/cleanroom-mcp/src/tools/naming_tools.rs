@@ -9,6 +9,8 @@ pub struct ResolveNameParams {
     pub document_name: String,
     pub sdef_uri: String,
     pub language: String,
+    /// Symbol type: "class", "interface", "function", "variable", "constant", "enum", "type"
+    pub symbol_type: String,
 }
 
 /// Batch resolve parameters.
@@ -17,6 +19,8 @@ pub struct BatchResolveParams {
     pub document_name: String,
     pub uris: Vec<String>,
     pub language: String,
+    /// Optional symbol type to apply to all URIs. Defaults to "variable".
+    pub symbol_type: Option<String>,
 }
 
 /// List symbols parameters.

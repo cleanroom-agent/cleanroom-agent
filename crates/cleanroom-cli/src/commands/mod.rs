@@ -1,15 +1,16 @@
 //! CLI commands — all user-facing messages use i18n via `tr_global!()`.
+//!
+//! Uses `CleanroomAgent` (with adk-rust integration) as the top-level entry point.
 
 use std::path::Path;
 use std::sync::Arc;
 use anyhow::{Result, Context};
 use clap::Subcommand;
 use cleanroom_agent::{
-    Orchestrator, OrchestratorConfig, ProducerAgent, ProducerConfig,
-    ConsumerAgent, ConsumerConfig, CompatibilityMode, Fidelity,
-    CompatibilityResolver, CompletenessValidator, format_report,
+    AgentConfig, CleanroomAgent, RunMode,
+    CompatibilityMode, Fidelity, CompatibilityResolver, CompletenessValidator, format_report,
 };
-use cleanroom_db::{Database, TaskRepository, TaskStatus};
+use cleanroom_db::Database;
 use cleanroom_i18n::tr_global;
 
 #[derive(Subcommand)]
@@ -24,6 +25,12 @@ pub enum Commands {
         exclude: Option<String>,
         #[arg(long)]
         name: Option<String>,
+        /// LLM model (e.g. gemini-2.5-flash)
+        #[arg(long)]
+        model: Option<String>,
+        /// API key for LLM provider
+        #[arg(long)]
+        api_key: Option<String>,
     },
 
     /// Consumption mode: read S.DEF → generate code
@@ -40,6 +47,12 @@ pub enum Commands {
         compat_mode: String,
         #[arg(long, default_value = "medium")]
         fidelity: String,
+        /// LLM model (e.g. gemini-2.5-flash)
+        #[arg(long)]
+        model: Option<String>,
+        /// API key for LLM provider
+        #[arg(long)]
+        api_key: Option<String>,
     },
 
     /// MCP server mode
@@ -88,11 +101,11 @@ pub enum Commands {
 
 pub fn run(command: Commands, db_path: &str) -> Result<()> {
     match command {
-        Commands::Produce { repo, output, exclude: _, name } => {
-            produce_command(&repo, &output, db_path, name)
+        Commands::Produce { repo, output, exclude: _, name, model, api_key } => {
+            produce_command(&repo, &output, db_path, name, model, api_key)
         }
-        Commands::Consume { sdef, output, language, framework, compat_mode, fidelity } => {
-            consume_command(&sdef, &output, &language, framework.as_deref(), &compat_mode, &fidelity, db_path)
+        Commands::Consume { sdef, output, language, framework, compat_mode, fidelity, model, api_key } => {
+            consume_command(&sdef, &output, &language, framework.as_deref(), &compat_mode, &fidelity, db_path, model, api_key)
         }
         Commands::Serve { transport } => {
             serve_command(&transport, db_path)
@@ -115,7 +128,19 @@ pub fn run(command: Commands, db_path: &str) -> Result<()> {
     }
 }
 
-fn produce_command(repo: &str, output: &str, db_path: &str, name: Option<String>) -> Result<()> {
+fn set_api_key(key: Option<String>) {
+    if let Some(k) = key {
+        if std::env::var("GOOGLE_API_KEY").is_err() {
+            std::env::set_var("GOOGLE_API_KEY", k);
+        }
+    }
+}
+
+fn produce_command(
+    repo: &str, output: &str, db_path: &str,
+    name: Option<String>, model: Option<String>, api_key: Option<String>,
+) -> Result<()> {
+    set_api_key(api_key);
     use tokio::runtime::Runtime;
     let project_name = name.unwrap_or_else(|| {
         Path::new(repo).file_name()
@@ -125,21 +150,23 @@ fn produce_command(repo: &str, output: &str, db_path: &str, name: Option<String>
 
     let rt = Runtime::new().context(tr_global!("cli.error_runtime"))?;
     rt.block_on(async {
-        let config = OrchestratorConfig {
+        let agent_config = AgentConfig {
+            db_path: Path::new(db_path).to_path_buf(),
+            model_name: model,
+            agent_name: "cleanroom-producer".to_string(),
+            ..AgentConfig::default()
+        };
+        let agent = CleanroomAgent::new(agent_config)
+            .context(tr_global!("cli.error_orchestrator"))?;
+
+        let pn = project_name.clone();
+        agent.run(RunMode::Produce {
             repo_path: Path::new(repo).to_path_buf(),
             output_path: Path::new(output).to_path_buf(),
-            db_path: Path::new(db_path).to_path_buf(),
-            checkpoint_interval_secs: 600,
-            agent_idle_timeout_secs: 300,
-        };
-        let orchestrator = Orchestrator::new(config).context(tr_global!("cli.error_orchestrator"))?;
-        orchestrator.start_workflow().await?;
+            project_name,
+        }).await?;
 
-        let producer = ProducerAgent::new(ProducerConfig::default(), orchestrator.db().clone());
-        while let Ok(Some(task)) = producer.process_next_task().await {
-            println!("{}", tr_global!("cli.produce_processed", task.task_id));
-        }
-        println!("{}", tr_global!("cli.produce_complete", project_name));
+        println!("{}", tr_global!("cli.produce_complete", pn));
         Ok(())
     })
 }
@@ -147,46 +174,51 @@ fn produce_command(repo: &str, output: &str, db_path: &str, name: Option<String>
 fn consume_command(
     sdef: &str, output: &str, language: &str, framework: Option<&str>,
     compat_mode: &str, fidelity: &str, db_path: &str,
+    model: Option<String>, api_key: Option<String>,
 ) -> Result<()> {
+    set_api_key(api_key);
     println!("{}", tr_global!("cli.consume_step1", sdef));
-    import_sdef_file(sdef, db_path)?;
 
-    let db = Arc::new(Database::open(Path::new(db_path))?);
-
-    let compat = match compat_mode {
-        "full" => cleanroom_agent::ResolverMode::Full,
-        "mixed" => cleanroom_agent::ResolverMode::Mixed,
-        "clean" => cleanroom_agent::ResolverMode::Clean,
-        _ => cleanroom_agent::ResolverMode::Mixed,
+    let cm = match compat_mode {
+        "full" => CompatibilityMode::Full,
+        "mixed" => CompatibilityMode::Mixed,
+        "clean" => CompatibilityMode::Clean,
+        _ => CompatibilityMode::Mixed,
     };
-    let compat_resolver = CompatibilityResolver::new(db.clone(), compat);
-    println!("Step 2/5: {}", compat_resolver.describe());
-
-    let config = ConsumerConfig {
-        language: language.to_string(),
-        framework: framework.map(String::from),
-        compatibility_mode: CompatibilityMode::Full,
-        fidelity: if fidelity == "high" { Fidelity::High }
-                  else if fidelity == "low" { Fidelity::Low }
-                  else { Fidelity::Medium },
-        output_path: Path::new(output).to_path_buf(),
+    let fid = match fidelity {
+        "high" => Fidelity::High,
+        "low" => Fidelity::Low,
+        _ => Fidelity::Medium,
     };
-    let consumer = ConsumerAgent::new(config, db.clone());
+
     let rt = tokio::runtime::Runtime::new().context(tr_global!("cli.error_runtime"))?;
     rt.block_on(async {
-        println!("{}", tr_global!("cli.consume_step3", language, output));
-        match consumer.generate_code().await {
-            Ok(()) => println!("{}", tr_global!("cli.consume_step4")),
-            Err(e) => eprintln!("Error: {}", e),
-        }
-    });
+        let agent_config = AgentConfig {
+            db_path: Path::new(db_path).to_path_buf(),
+            model_name: model,
+            agent_name: "cleanroom-consumer".to_string(),
+            ..AgentConfig::default()
+        };
+        let agent = CleanroomAgent::new(agent_config)
+            .context(tr_global!("cli.error_orchestrator"))?;
 
-    let validator = CompletenessValidator::new(db);
-    match validator.validate("") {
-        Ok(report) => println!("{}", format_report(&report)),
-        Err(_) => {}
-    }
-    Ok(())
+        agent.run(RunMode::Consume {
+            sdef_path: Path::new(sdef).to_path_buf(),
+            output_path: Path::new(output).to_path_buf(),
+            language: language.to_string(),
+            framework: framework.map(|s| s.to_string()),
+            compat_mode: cm,
+            fidelity: fid,
+        }).await?;
+
+        // Run completeness validation
+        let validator = CompletenessValidator::new(agent.db().clone());
+        match validator.validate("") {
+            Ok(report) => println!("{}", format_report(&report)),
+            Err(_) => {}
+        }
+        Ok(())
+    })
 }
 
 fn serve_command(transport: &str, db_path: &str) -> Result<()> {
@@ -201,50 +233,21 @@ fn serve_command(transport: &str, db_path: &str) -> Result<()> {
 }
 
 fn resume_command(document: &str, retry_failed: bool, db_path: &str) -> Result<()> {
-    let db = Database::open(Path::new(db_path))?;
-    let repo = TaskRepository::new(db.connection_arc());
+    let rt = tokio::runtime::Runtime::new().context(tr_global!("cli.error_runtime"))?;
+    rt.block_on(async {
+        let agent_config = AgentConfig {
+            db_path: Path::new(db_path).to_path_buf(),
+            ..AgentConfig::default()
+        };
+        let agent = CleanroomAgent::new(agent_config)
+            .context(tr_global!("cli.error_runtime"))?;
 
-    let all_tasks = repo.list(None, None, None)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-    let doc_tasks: Vec<_> = all_tasks.iter().filter(|t| {
-        t.input_json.contains(document)
-    }).collect();
-
-    if doc_tasks.is_empty() {
-        println!("{}", tr_global!("cli.resume_no_tasks", document));
-        println!("{}", tr_global!("cli.resume_hint"));
-        return Ok(());
-    }
-
-    let pending: Vec<_> = doc_tasks.iter().filter(|t| t.status == TaskStatus::Pending).collect();
-    let in_progress: Vec<_> = doc_tasks.iter().filter(|t| matches!(t.status, TaskStatus::InProgress | TaskStatus::Assigned)).collect();
-    let failed: Vec<_> = doc_tasks.iter().filter(|t| t.status == TaskStatus::Failed).collect();
-    let completed: Vec<_> = doc_tasks.iter().filter(|t| t.status == TaskStatus::Completed).collect();
-
-    println!("{}", tr_global!("cli.resume_summary", document));
-    println!("{}", tr_global!("cli.resume_total", doc_tasks.len()));
-    println!("{}", tr_global!("cli.resume_completed", completed.len()));
-    println!("{}", tr_global!("cli.resume_in_progress", in_progress.len()));
-    println!("{}", tr_global!("cli.resume_pending", pending.len()));
-    println!("{}", tr_global!("cli.resume_failed", failed.len()));
-
-    for task in &in_progress {
-        repo.update_status(&task.task_id, TaskStatus::Pending)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        println!("{}", tr_global!("cli.resume_reset", task.task_id));
-    }
-
-    if retry_failed {
-        for task in &failed {
-            repo.update_status(&task.task_id, TaskStatus::Pending)
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            println!("{}", tr_global!("cli.resume_retrying", task.task_id));
-        }
-    }
-
-    println!("{}", tr_global!("cli.resume_ready"));
-    Ok(())
+        agent.run(RunMode::Resume {
+            document: document.to_string(),
+            retry_failed,
+        }).await?;
+        Ok(())
+    })
 }
 
 fn inspect_command(check_type: &str, db_path: &str) -> Result<()> {
@@ -448,7 +451,6 @@ fn build_export_sdef(
     Ok(sdef)
 }
 
-/// Parse and import an S.DEF file into the database.
 fn import_sdef_file(file: &str, db_path: &str) -> Result<String> {
     let content = std::fs::read_to_string(file)
         .context(tr_global!("cli.import_fail_read"))?;
@@ -464,40 +466,11 @@ fn import_sdef_file(file: &str, db_path: &str) -> Result<String> {
     let db = Database::open(Path::new(db_path))?;
     let conn = db.connection();
 
-    conn.execute(
-        "INSERT OR IGNORE INTO sdef_documents (name, version, description, created_at, updated_at)
-         VALUES (?1, ?2, ?3, datetime(), datetime())",
-        rusqlite::params![sdef.name, sdef.version, sdef.description],
-    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-    if let Some(models) = &sdef.data_models {
-        for model in models {
-            conn.execute(
-                "INSERT OR IGNORE INTO data_models (entity, document_name, status, version, description)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    model.entity, sdef.name,
-                    model.status.clone().unwrap_or_else(|| "active".to_string()),
-                    model.version, model.description,
-                ],
-            ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-            if let Some(attrs) = &model.attributes {
-                for attr in attrs {
-                    conn.execute(
-                        "INSERT INTO data_attributes (document_name, entity, name, attr_type, format, description,
-                         required, identity, generated, unique_flag, internal, deprecated)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                        rusqlite::params![
-                            sdef.name, model.entity, attr.name, attr.attr_type, attr.format,
-                            attr.description, attr.required, attr.identity, attr.generated,
-                            attr.unique, attr.internal, attr.deprecated,
-                        ],
-                    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                }
-            }
-        }
-    }
+    // Use the export_import importer for full data model + contract import
+    let importer = cleanroom_db::export_import::SdefImporter::new(
+        rusqlite::Connection::open(db_path)?,
+    );
+    importer.import(&sdef)?;
 
     let model_count = sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0);
     println!("{}", tr_global!("cli.import_success", sdef.name, model_count));
