@@ -10,6 +10,14 @@ impl CodeGenerator for RustGenerator {
     fn generate_data_model(&self, model: &DataModel) -> Vec<GeneratedCode> {
         let mut output = String::new();
         
+        // Deduplicate attributes by name to avoid duplicate field definitions
+        let deduped_attrs: Vec<&sdef_core::DataAttribute> = model.attributes.as_ref()
+            .map(|attrs| {
+                let mut seen = std::collections::HashSet::new();
+                attrs.iter().filter(|a| seen.insert(a.name.as_str())).collect()
+            })
+            .unwrap_or_default();
+        
         // Generate struct
         if let Some(desc) = &model.description {
             output.push_str("/// ");
@@ -19,20 +27,18 @@ impl CodeGenerator for RustGenerator {
         output.push_str(&format!("pub struct {} {{\n", to_pascal_case(&model.entity)));
         
         // Generate fields
-        if let Some(attrs) = &model.attributes {
-            for attr in attrs {
-                if let Some(desc) = &attr.description {
-                    output.push_str("    /// ");
-                    output.push_str(desc);
-                    output.push('\n');
-                }
-                let ty = rust_type(&attr.attr_type, attr.required);
-                output.push_str(&format!(
-                    "    pub {}: {},\n",
-                    to_snake_case(&attr.name),
-                    ty,
-                ));
+        for attr in &deduped_attrs {
+            if let Some(desc) = &attr.description {
+                output.push_str("    /// ");
+                output.push_str(desc);
+                output.push('\n');
             }
+            let ty = rust_type(&attr.attr_type, attr.required);
+            output.push_str(&format!(
+                "    pub {}: {},\n",
+                to_snake_case(&attr.name),
+                ty,
+            ));
         }
         
         output.push_str("}\n");
@@ -42,26 +48,23 @@ impl CodeGenerator for RustGenerator {
         output.push_str("    /// Create a new instance.\n");
         output.push_str("    pub fn new(");
         
-        // Constructor params
-        if let Some(attrs) = &model.attributes {
-            let params: Vec<String> = attrs.iter()
-                .filter(|a| !a.generated && !a.internal)
-                .map(|attr| {
-                    format!("{}: {}", to_snake_case(&attr.name), rust_type(&attr.attr_type, attr.required))
-                })
-                .collect();
-            output.push_str(&params.join(", "));
-        }
+        // Constructor params (skip generated/internal)
+        let ctor_params: Vec<String> = deduped_attrs.iter()
+            .filter(|a| !a.generated && !a.internal)
+            .map(|attr| {
+                format!("{}: {}", to_snake_case(&attr.name), rust_type(&attr.attr_type, attr.required))
+            })
+            .collect();
+        output.push_str(&ctor_params.join(", "));
         output.push_str(") -> Self {\n");
         output.push_str(&format!("        Self {{\n"));
-        if let Some(attrs) = &model.attributes {
-            for attr in attrs {
-                output.push_str(&format!(
-                    "            {}: {},\n",
-                    to_snake_case(&attr.name),
-                    to_snake_case(&attr.name)
-                ));
-            }
+        // Constructor body — only assign non-generated, non-internal fields
+        for attr in deduped_attrs.iter().filter(|a| !a.generated && !a.internal) {
+            output.push_str(&format!(
+                "            {}: {},\n",
+                to_snake_case(&attr.name),
+                to_snake_case(&attr.name)
+            ));
         }
         output.push_str("        }\n    }\n}\n");
         
@@ -119,7 +122,7 @@ impl CodeGenerator for RustGenerator {
         let mut derives = vec!["Debug", "Clone"];
         if let Some(implements) = &class.implements {
             if !implements.is_empty() {
-                derives.push("impl");
+                derives.extend(implements.iter().cloned());
             }
         }
         output.push_str(&format!("#[derive({})]\n", derives.join(", ")));

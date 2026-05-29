@@ -426,8 +426,5 @@ END;
 
 -- ============================================
 -- 6. 迁移版本记录
+-- (由 run_pending() 自动管理，此处不再创建)
 -- ============================================
-CREATE TABLE schema_migrations (
-    version TEXT PRIMARY KEY,
-    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);

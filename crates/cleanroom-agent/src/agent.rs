@@ -162,6 +162,7 @@ impl CleanroomAgent {
             repo_path,
             output_path,
             db_path: self.config.db_path.clone(),
+            project_name,
             checkpoint_interval_secs: 600,
             agent_idle_timeout_secs: 300,
         };

@@ -141,6 +141,22 @@ impl SdefImporter {
         }
 
         drop(conn);
+
+        // Register symbols (using a fresh connection for simplicity)
+        if let Some(data_models) = &sdef.data_models {
+            let conn = self.conn.lock().unwrap();
+            for model in data_models {
+                for lang in &["rust", "typescript", "python", "go", "c"] {
+                    let uri = format!("sdef://{}/entity/{}", doc_name, model.entity);
+                    conn.execute(
+                        "INSERT OR IGNORE INTO symbol_registry (document_name, sdef_uri, language, symbol_type, concrete_name, is_user_defined)
+                         VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+                        rusqlite::params![doc_name, uri, lang, "class", model.entity],
+                    ).ok();
+                }
+            }
+        }
+
         Ok(doc_name)
     }
 

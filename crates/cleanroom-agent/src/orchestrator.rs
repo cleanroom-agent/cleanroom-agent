@@ -15,6 +15,8 @@ pub struct OrchestratorConfig {
     pub output_path: PathBuf,
     /// Database path.
     pub db_path: PathBuf,
+    /// Project/document name.
+    pub project_name: String,
     /// Checkpoint interval in seconds.
     pub checkpoint_interval_secs: u64,
     /// Idle timeout for agents.
@@ -27,6 +29,7 @@ impl Default for OrchestratorConfig {
             repo_path: PathBuf::from("."),
             output_path: PathBuf::from("./output"),
             db_path: PathBuf::from("state.db"),
+            project_name: "unnamed".to_string(),
             checkpoint_interval_secs: 600, // 10 minutes
             agent_idle_timeout_secs: 300, // 5 minutes
         }
@@ -74,6 +77,7 @@ impl Orchestrator {
             priority: 10,
             input_json: serde_json::json!({
                 "repo_path": self.config.repo_path.to_string_lossy(),
+                "project_name": self.config.project_name,
             }).to_string(),
             output_json: None,
             error_message: None,

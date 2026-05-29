@@ -166,6 +166,15 @@ pub fn known_grammars() -> Vec<GrammarDescriptor> {
                 "decorated_definition",
             ],
         },
+        // C grammar — uses c_parser sub-module for node walking
+        GrammarDescriptor {
+            language: "c",
+            extensions: &["c", "h"],
+            top_level_nodes: &[
+                "struct_specifier", "enum_specifier",
+                "function_definition",
+            ],
+        },
     ]
 }
 
@@ -240,32 +249,41 @@ fn extract_top_level_node(
     source: &str,
     kind: &str,
 ) -> Option<IrEntity> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = name_node.utf8_text(source.as_bytes()).ok()?.to_string();
-    let description = extract_doc_comment(node, source);
-
+    // C-specific node kinds use their own sub-parsers that handle name extraction internally
     match kind {
-        // Rust struct -> DataModel
-        "struct_item" | "class_declaration" => {
-            let attrs = extract_field_attributes(node, source);
-            Some(IrEntity::DataModel { name, description, attributes: attrs })
+        "struct_specifier" => c_parser::extract_c_struct(node, source),
+        "enum_specifier" => c_parser::extract_c_enum(node, source),
+        "function_definition" => c_parser::extract_c_function(node, source),
+        _ => {
+            // Non-C languages: all have a "name" field on top-level nodes
+            let name_node = node.child_by_field_name("name")?;
+            let name = name_node.utf8_text(source.as_bytes()).ok()?.to_string();
+            let description = extract_doc_comment(node, source);
+
+            match kind {
+                // Rust struct -> DataModel
+                "struct_item" | "class_declaration" => {
+                    let attrs = extract_field_attributes(node, source);
+                    Some(IrEntity::DataModel { name, description, attributes: attrs })
+                }
+                // Rust trait / TypeScript interface -> Interface
+                "trait_item" | "interface_declaration" | "type_alias_declaration" => {
+                    let methods = extract_methods(node, source);
+                    Some(IrEntity::Interface { name, description, methods })
+                }
+                // Function -> Function (non-C languages)
+                "function_item" | "function_declaration" => {
+                    let (inputs, outputs) = extract_function_params(node, source);
+                    Some(IrEntity::Function { name, description, inputs, outputs })
+                }
+                // Rust enum -> DataModel (with variant attributes)
+                "enum_item" | "enum_declaration" => {
+                    let attrs = extract_enum_variants(node, source);
+                    Some(IrEntity::DataModel { name, description, attributes: attrs })
+                }
+                _ => None,
+            }
         }
-        // Rust trait / TypeScript interface -> Interface
-        "trait_item" | "interface_declaration" | "type_alias_declaration" => {
-            let methods = extract_methods(node, source);
-            Some(IrEntity::Interface { name, description, methods })
-        }
-        // Function -> Function
-        "function_item" | "function_declaration" | "function_definition" => {
-            let (inputs, outputs) = extract_function_params(node, source);
-            Some(IrEntity::Function { name, description, inputs, outputs })
-        }
-        // Rust enum -> DataModel (with variant attributes)
-        "enum_item" | "enum_declaration" => {
-            let attrs = extract_enum_variants(node, source);
-            Some(IrEntity::DataModel { name, description, attributes: attrs })
-        }
-        _ => None,
     }
 }
 

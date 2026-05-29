@@ -488,7 +488,106 @@ impl SdefMapper {
             }
         }
 
-        // 3. Register symbols directly
+        // 3. Save design decisions
+        if let Some(decisions) = &sdef.design_decisions {
+            for decision in decisions {
+                conn.execute(
+                    "INSERT OR IGNORE INTO design_decisions (id, document_name, topic, decision, rationale, context, alternatives_json, consequences_json, constraints_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        decision.id,
+                        self.config.document_name,
+                        decision.topic,
+                        decision.decision,
+                        decision.rationale,
+                        decision.context,
+                        decision.alternatives.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
+                        decision.consequences.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
+                        decision.constraints.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
+                    ],
+                ).ok();
+            }
+        }
+
+        // 4. Save contracts (interfaces)
+        if let Some(contracts) = &sdef.contracts {
+            if let Some(interfaces) = &contracts.interfaces {
+                for iface in interfaces {
+                    conn.execute(
+                        "INSERT OR IGNORE INTO contracts (name, document_name, contract_type, status, version, is_abstract, description)
+                         VALUES (?1, ?2, 'interface', ?3, ?4, ?5, ?6)",
+                        params![
+                            iface.name,
+                            self.config.document_name,
+                            "active",
+                            iface.version,
+                            iface.is_abstract,
+                            iface.description,
+                        ],
+                    ).ok();
+
+                    if let Some(methods) = &iface.methods {
+                        for method in methods {
+                            conn.execute(
+                                "INSERT INTO contract_methods (document_name, contract_name, signature, status, behavior)
+                                 VALUES (?1, ?2, ?3, 'active', ?4)",
+                                params![
+                                    self.config.document_name,
+                                    iface.name,
+                                    method.signature,
+                                    method.behavior,
+                                ],
+                            ).ok();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Save behavior (functions)
+        if let Some(behavior) = &sdef.behavior {
+            if let Some(functions) = &behavior.functions {
+                for func in functions {
+                    let result = conn.execute(
+                        "INSERT INTO function_specs (document_name, name, description, logic, complexity, pure_function)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![
+                            self.config.document_name,
+                            func.name,
+                            func.description,
+                            func.logic,
+                            func.complexity,
+                            func.pure_function,
+                        ],
+                    );
+                    if let Ok(_) = result {
+                        let func_id = conn.last_insert_rowid();
+                        // Save input params
+                        if let Some(inputs) = &func.inputs {
+                            for input in inputs {
+                                conn.execute(
+                                    "INSERT INTO function_params (function_id, param_direction, name, param_type, description)
+                                     VALUES (?1, 'input', ?2, ?3, ?4)",
+                                    params![func_id, input.name, input.param_type, input.description],
+                                ).ok();
+                            }
+                        }
+                        // Save output params
+                        if let Some(outputs) = &func.outputs {
+                            for output in outputs {
+                                conn.execute(
+                                    "INSERT INTO function_params (function_id, param_direction, name, param_type, description)
+                                     VALUES (?1, 'output', ?2, ?3, ?4)",
+                                    params![func_id, output.name, output.param_type, output.description],
+                                ).ok();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. Register symbols directly
         if let Some(models) = &sdef.data_models {
             for model in models {
                 for file in files {
@@ -498,6 +597,7 @@ impl SdefMapper {
                         Some("python") => "python",
                         Some("go") => "go",
                         Some("java") => "java",
+                        Some("c") => "c",
                         _ => continue,
                     };
                     let name = self.names.convert_for_language(

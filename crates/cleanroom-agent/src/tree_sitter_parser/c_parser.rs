@@ -59,46 +59,27 @@ fn extract_c_struct(node: &Node, source: &str) -> Option<IrEntity> {
     let name = name_node.utf8_text(source.as_bytes()).ok()?.to_string();
 
     let mut attrs = Vec::new();
-    // Parse field declarations from the raw text using simple heuristics
+    // Walk field_declaration nodes from the body using proper tree-sitter node traversal
     if let Some(body) = node.child_by_field_name("body") {
-        if let Ok(body_text) = body.utf8_text(source.as_bytes()) {
-            for line in body_text.lines() {
-                let trimmed = line.trim();
-                // Skip braces and empty lines
-                if trimmed.is_empty() || trimmed == "{" || trimmed == "}" { continue; }
-                // Remove trailing semicolon
-                let cleaned = trimmed.trim_end_matches(';').trim();
-                // Split on '//' to remove inline comments
-                let code_part = cleaned.split("//").next().unwrap_or(cleaned).trim();
-                if code_part.is_empty() { continue; }
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "field_declaration" {
+                // Extract field name from declarator
+                let field_name = child.child_by_field_name("declarator")
+                    .and_then(|d| find_field_name(d, source))
+                    .unwrap_or("unnamed");
+                // Extract field type
+                let field_type = child.child_by_field_name("type")
+                    .and_then(|t| t.utf8_text(source.as_bytes()).ok())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
 
-                // Try to find field name: last identifier before potential array/pointer
-                // Patterns: "type name;", "type *name;", "type name[n];", "type name, name2;"
-                let parts: Vec<&str> = code_part.split(|c: char| c == ',' || c == ';').collect();
-                for part in parts {
-                    let part = part.trim();
-                    if part.is_empty() { continue; }
-
-                    // Find the type and field name by looking at the last word
-                    let tokens: Vec<&str> = part.split_whitespace().collect();
-                    if tokens.len() >= 2 {
-                        // The type is everything except the last identifier token
-                        let field_name = tokens.last().unwrap_or(&"");
-                        let field_name = field_name.trim_start_matches('*');
-                        // Clean up array notation
-                        let field_name = field_name.split('[').next().unwrap_or(field_name);
-                        let field_type = tokens[..tokens.len()-1].join(" ");
-
-                        if !field_name.is_empty() && !field_type.is_empty() {
-                            attrs.push(IrAttribute {
-                                name: field_name.to_string(),
-                                attr_type: field_type,
-                                description: None,
-                                required: true,
-                            });
-                        }
-                    }
-                }
+                attrs.push(IrAttribute {
+                    name: field_name.to_string(),
+                    attr_type: field_type,
+                    description: None,
+                    required: true,
+                });
             }
         }
     }
@@ -108,6 +89,38 @@ fn extract_c_struct(node: &Node, source: &str) -> Option<IrEntity> {
         description: None,
         attributes: attrs,
     })
+}
+
+/// Find the field name from a declarator node (handles pointers, arrays).
+fn find_field_name<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
+    // Try direct identifier
+    if let Some(id) = node.child_by_field_name("name") {
+        if let Ok(text) = id.utf8_text(source.as_bytes()) {
+            return Some(text.trim());
+        }
+    }
+    // Try treating the node's own text as the identifier
+    if let Ok(text) = node.utf8_text(source.as_bytes()) {
+        let clean = text.trim().trim_start_matches('*').trim_end_matches('[').trim_end_matches(']');
+        if !clean.is_empty() && !clean.contains(' ') && !clean.contains('(') {
+            // Walk children: look for identifier nodes
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "identifier" {
+                    if let Ok(t) = child.utf8_text(source.as_bytes()) {
+                        return Some(t.trim());
+                    }
+                }
+                // Handle nested pointer/array declarators
+                if matches!(child.kind(), "pointer_declarator" | "array_declarator") {
+                    if let Some(name) = find_field_name(child, source) {
+                        return Some(name);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Extract a C enum as IrEntity::DataModel (with enum values as attrs).
