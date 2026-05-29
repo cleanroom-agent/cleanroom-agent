@@ -65,7 +65,7 @@ impl CleanroomMcpServer {
         let checker_config = cleanroom_agent::consistency_checker::ConsistencyCheckerConfig {
             interval: std::time::Duration::from_secs(300),
             document_names: vec![], // populated as documents are created
-            auto_fix: false,
+            auto_fix: true,
         };
         let checker = cleanroom_agent::consistency_checker::ConsistencyChecker::new(
             checker_db, checker_config,

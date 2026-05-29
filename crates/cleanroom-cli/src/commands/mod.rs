@@ -9,6 +9,7 @@ use clap::Subcommand;
 use cleanroom_agent::{
     AgentConfig, CleanroomAgent, RunMode,
     CompatibilityMode, Fidelity, CompatibilityResolver, CompletenessValidator, format_report,
+    VersionUpgradeAnalyzer,
 };
 use cleanroom_db::Database;
 use cleanroom_i18n::tr_global;
@@ -97,6 +98,21 @@ pub enum Commands {
         #[arg(long, default_value = "up")]
         direction: String,
     },
+
+    /// Version upgrade analysis: detect breaking changes between git tags
+    Upgrade {
+        #[arg(long)]
+        old_version: String,
+        #[arg(long)]
+        new_version: String,
+        #[arg(long)]
+        repo: String,
+        #[arg(long)]
+        document: Option<String>,
+        /// Apply detected changes to the database
+        #[arg(long, default_value = "false")]
+        apply: bool,
+    },
 }
 
 pub fn run(command: Commands, db_path: &str) -> Result<()> {
@@ -124,6 +140,9 @@ pub fn run(command: Commands, db_path: &str) -> Result<()> {
         }
         Commands::Migrate { direction } => {
             migrate_command(&direction, db_path)
+        }
+        Commands::Upgrade { old_version, new_version, repo, document, apply } => {
+            upgrade_command(&old_version, &new_version, &repo, document.as_deref(), apply, db_path)
         }
     }
 }
@@ -495,5 +514,52 @@ fn migrate_command(direction: &str, db_path: &str) -> Result<()> {
             println!("{}", tr_global!("cli.migrate_unknown_direction", direction));
         }
     }
+    Ok(())
+}
+
+fn upgrade_command(
+    old_version: &str, new_version: &str, repo: &str,
+    document: Option<&str>, apply: bool, db_path: &str,
+) -> Result<()> {
+    let db = Arc::new(Database::open(Path::new(db_path))?);
+    let doc_name = document.unwrap_or("default");
+
+    println!("{}", tr_global!("cli.upgrade_running", old_version, new_version));
+
+    let analyzer = VersionUpgradeAnalyzer::new(db.clone(), repo);
+    let report = analyzer.analyze(old_version, new_version)
+        .context(anyhow::anyhow!("Version upgrade analysis failed"))?;
+
+    println!("{}", tr_global!("cli.upgrade_summary"));
+    println!("{}", tr_global!("cli.upgrade_files_added", report.added_files.len()));
+    println!("{}", tr_global!("cli.upgrade_files_modified", report.modified_files.len()));
+    println!("{}", tr_global!("cli.upgrade_files_deleted", report.deleted_files.len()));
+    println!("{}", tr_global!("cli.upgrade_breaking", report.breaking_changes.len()));
+
+    for change in &report.breaking_changes {
+        println!("  - {}", change.description);
+    }
+
+    println!("{}", tr_global!("cli.upgrade_deprecated", report.deprecated_entities.len()));
+    for entity in &report.deprecated_entities {
+        println!("{}", tr_global!("cli.upgrade_entity", entity));
+    }
+
+    println!("{}", tr_global!("cli.upgrade_compat_layers", report.new_compat_layers.len()));
+    for layer in &report.new_compat_layers {
+        println!("{}", tr_global!("cli.upgrade_entity", layer));
+    }
+
+    println!("{}", tr_global!("cli.upgrade_migrations", report.suggested_migrations.len()));
+    for m in &report.suggested_migrations {
+        println!("{}", tr_global!("cli.upgrade_entity", m.from_entity));
+        println!("{}", tr_global!("cli.upgrade_entity_new", m.to_entity));
+    }
+
+    if apply {
+        analyzer.apply_upgrade(&report)?;
+        println!("{}", tr_global!("cli.upgrade_applied", old_version, new_version));
+    }
+
     Ok(())
 }
