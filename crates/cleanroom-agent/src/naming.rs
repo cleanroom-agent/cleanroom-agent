@@ -169,23 +169,48 @@ impl DeterministicNames {
 
     fn split_words(name: &str) -> Vec<String> {
         let mut words = Vec::new();
-        let mut current = String::new();
 
-        for c in name.chars() {
-            if c.is_uppercase() && !current.is_empty() {
-                words.push(current.clone());
-                current.clear();
-            }
-            if c.is_alphanumeric() {
+        // First split on non-alphanumeric characters
+        for segment in name.split(|c: char| !c.is_alphanumeric()).filter(|p| !p.is_empty()) {
+            let chars: Vec<char> = segment.chars().collect();
+            let mut current = String::new();
+
+            for i in 0..chars.len() {
+                let c = chars[i];
+                let next = chars.get(i + 1);
+
+                if current.is_empty() {
+                    current.push(c);
+                    continue;
+                }
+
+                // CamelCase boundary: uppercase followed by lowercase starts a new word
+                if c.is_uppercase() {
+                    if let Some(&n) = next {
+                        if n.is_lowercase() {
+                            // Check if current is an uppercase acronym run
+                            if current.chars().all(|ch| ch.is_uppercase() || ch.is_digit(10)) {
+                                if current.len() > 1 {
+                                    words.push(current.clone());
+                                    current.clear();
+                                } else {
+                                    words.push(current.clone());
+                                    current.clear();
+                                }
+                            } else {
+                                words.push(current.clone());
+                                current.clear();
+                            }
+                        }
+                    }
+                }
+
                 current.push(c);
-            } else if !current.is_empty() {
-                words.push(current.clone());
-                current.clear();
             }
-        }
 
-        if !current.is_empty() {
-            words.push(current);
+            if !current.is_empty() {
+                words.push(current);
+            }
         }
 
         words

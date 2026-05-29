@@ -144,6 +144,10 @@ fn find_field_name<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
                     }
                 }
             }
+            // Fallback: if no children found but text looks like a valid identifier, use it directly
+            if clean.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return Some(clean.trim());
+            }
         }
     }
     None

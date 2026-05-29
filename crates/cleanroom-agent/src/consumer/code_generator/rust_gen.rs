@@ -236,14 +236,56 @@ fn to_pascal_case(s: &str) -> String {
 }
 
 fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
+    let mut words: Vec<String> = Vec::new();
+
+    // First split on non-alphanumeric characters (underscores, hyphens, etc.)
+    for segment in s.split(|c: char| !c.is_alphanumeric()).filter(|p| !p.is_empty()) {
+        let chars: Vec<char> = segment.chars().collect();
+        let mut current = String::new();
+
+        for i in 0..chars.len() {
+            let c = chars[i];
+            let next = chars.get(i + 1);
+
+            if current.is_empty() {
+                current.push(c);
+                continue;
+            }
+
+            // CamelCase boundary: uppercase followed by lowercase starts a new word
+            if c.is_uppercase() {
+                if let Some(&n) = next {
+                    if n.is_lowercase() {
+                        // Check if current is an uppercase acronym run (e.g., "HTTP" + "Server")
+                        if current.chars().all(|ch| ch.is_uppercase() || ch.is_digit(10)) {
+                            if current.len() > 1 {
+                                words.push(current.clone());
+                                current.clear();
+                            } else {
+                                // Single uppercase char = part of next word (e.g., "getUser")
+                                words.push(current.clone());
+                                current.clear();
+                            }
+                        } else {
+                            words.push(current.clone());
+                            current.clear();
+                        }
+                    }
+                }
+            }
+
+            current.push(c);
         }
-        result.push(c.to_ascii_lowercase());
+
+        if !current.is_empty() {
+            words.push(current);
+        }
     }
-    result
+
+    words.iter()
+        .map(|w| w.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("_")
 }
 
 fn rust_type(sdef_type: &str, required: bool) -> String {
