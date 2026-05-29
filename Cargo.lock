@@ -20,6 +20,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "adk-anthropic"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4ae9adcb34bc1f35e15fbe16e2bdc9c4f7797a8e007401a97bb65ac00b27c93"
+dependencies = [
+ "base64",
+ "bytes",
+ "futures",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "adk-core"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -70,6 +88,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29ed8150197d3a036deae063126f719408c2d9828a00bd4b93664d4a3de5de13"
 dependencies = [
+ "adk-anthropic",
  "adk-core",
  "adk-gemini",
  "adk-telemetry",

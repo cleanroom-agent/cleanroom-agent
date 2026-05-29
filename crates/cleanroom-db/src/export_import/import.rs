@@ -148,10 +148,11 @@ impl SdefImporter {
             for model in data_models {
                 for lang in &["rust", "typescript", "python", "go", "c"] {
                     let uri = format!("sdef://{}/entity/{}", doc_name, model.entity);
+                    let name = convert_entity_name(&model.entity, lang);
                     conn.execute(
                         "INSERT OR IGNORE INTO symbol_registry (document_name, sdef_uri, language, symbol_type, concrete_name, is_user_defined)
                          VALUES (?1, ?2, ?3, ?4, ?5, 0)",
-                        rusqlite::params![doc_name, uri, lang, "class", model.entity],
+                        rusqlite::params![doc_name, uri, lang, "class", name],
                     ).ok();
                 }
             }
@@ -183,4 +184,79 @@ impl SdefImporter {
         .map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
     }
+}
+
+/// Convert entity name to language-specific naming convention.
+fn convert_entity_name(entity: &str, lang: &str) -> String {
+    let words: Vec<String> = split_pascal_case(entity);
+    match lang {
+        "rust" | "c" | "python" => {
+            words.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join("_")
+        }
+        "typescript" | "javascript" => {
+            let mut result = String::new();
+            for (i, w) in words.iter().enumerate() {
+                if i == 0 {
+                    result.push_str(&w.to_lowercase());
+                } else {
+                    result.push_str(w);
+                }
+            }
+            result
+        }
+        "go" | "java" | "csharp" => {
+            words.join("")
+        }
+        _ => entity.to_string(),
+    }
+}
+
+/// Split a PascalCase name into words.
+fn split_pascal_case(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+
+    // First split on non-alphanumeric characters
+    for segment in s.split(|c: char| !c.is_alphanumeric()).filter(|p| !p.is_empty()) {
+        let chars: Vec<char> = segment.chars().collect();
+        let mut current = String::new();
+
+        for i in 0..chars.len() {
+            let c = chars[i];
+            let next = chars.get(i + 1);
+
+            if current.is_empty() {
+                current.push(c);
+                continue;
+            }
+
+            // CamelCase boundary: uppercase followed by lowercase starts a new word
+            if c.is_uppercase() {
+                if let Some(&n) = next {
+                    if n.is_lowercase() {
+                        // Check if current is an uppercase acronym run (e.g., "HTTP" + "Server")
+                        if current.chars().all(|ch| ch.is_uppercase() || ch.is_digit(10)) {
+                            if current.len() > 1 {
+                                words.push(current.clone());
+                                current.clear();
+                            } else {
+                                words.push(current.clone());
+                                current.clear();
+                            }
+                        } else {
+                            words.push(current.clone());
+                            current.clear();
+                        }
+                    }
+                }
+            }
+
+            current.push(c);
+        }
+
+        if !current.is_empty() {
+            words.push(current);
+        }
+    }
+
+    words
 }

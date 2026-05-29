@@ -241,7 +241,7 @@ impl CleanroomMcpServer {
 
     // ============ Tool Dispatcher ============
 
-    fn dispatch_tool_call(&self, request: rmcp::model::CallToolRequestParams) -> Result<Value, String> {
+    pub fn dispatch_tool_call(&self, request: rmcp::model::CallToolRequestParams) -> Result<Value, String> {
         let name = request.name.to_string();
         let args = request.arguments.unwrap_or_default();
         let args_value = serde_json::to_value(&args).unwrap_or(json!({}));
