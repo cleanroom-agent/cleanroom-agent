@@ -13,6 +13,15 @@ pub struct ExportSdefParams {
 
 fn default_format() -> String { "json".to_string() }
 
+/// Export S.DEF to disk parameters.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ExportSdefDiskParams {
+    /// Document name to export.
+    pub document_name: String,
+    /// Output directory (will create {document_name}/ subdir).
+    pub output_dir: String,
+}
+
 /// Import S.DEF parameters.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ImportSdefParams {

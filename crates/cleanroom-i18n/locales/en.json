@@ -49,7 +49,7 @@
     "inspect_db": "Database: {0}",
     "inspect_inconsistent": "Inconsistent fingerprints: {0}",
     "inspect_total_fp": "Total fingerprints: {0}",
-    "inspect_consistency": "Consistency: {0:.1}%",
+    "inspect_consistency": "Consistency: {0}%",
     "inspect_coverage": "S.DEF coverage:",
     "inspect_data_models": "  Data models:    {0}",
     "inspect_attributes": "  Attributes:     {0}",
@@ -136,6 +136,7 @@
     "register_custom_name": "Register a custom name manually",
 
     "export_sdef": "Export complete S.DEF document (JSON/YAML)",
+    "export_sdef_to_disk": "Export S.DEF document to disk as shard file tree with .sdef-state directory",
     "import_sdef": "Import S.DEF from JSON into database",
 
     "create_checkpoint": "Create a global checkpoint snapshot",

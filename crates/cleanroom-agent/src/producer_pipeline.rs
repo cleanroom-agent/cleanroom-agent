@@ -103,6 +103,34 @@ pub async fn run_analysis_pipeline(
     })
 }
 
+/// Run the complete producer pipeline and also export S.DEF files to disk.
+#[instrument(skip(db))]
+pub async fn run_analysis_pipeline_with_export(
+    db: Arc<Database>,
+    repo_path: &Path,
+    project_name: &str,
+    version: &str,
+    description: Option<String>,
+    output_dir: &Path,
+) -> Result<PipelineResult, DbError> {
+    let result = run_analysis_pipeline(
+        db.clone(),
+        repo_path,
+        project_name,
+        version,
+        description,
+    ).await?;
+
+    // Export S.DEF to disk as shard file tree
+    let exporter = cleanroom_db::export_import::SdefFileExporter::new((*db).clone());
+    match exporter.export_to_disk(project_name, output_dir) {
+        Ok(root) => info!(path = %root.display(), "S.DEF files exported to disk"),
+        Err(e) => info!(error = %e, "Failed to export S.DEF files to disk"),
+    }
+
+    Ok(result)
+}
+
 /// Build a dependency graph from files and modules.
 fn build_dependency_graph(_files: &[SourceFile], modules: &[crate::module_partitioner::Module]) -> DependencyGraph {
     let mut graph = DependencyGraph::new();

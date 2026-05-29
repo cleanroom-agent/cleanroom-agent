@@ -275,6 +275,7 @@ impl CleanroomMcpServer {
             "register_custom_name" => self.handle_register_custom_name(args_value),
             // Import/Export
             "export_sdef" => self.handle_export_sdef(args_value),
+            "export_sdef_to_disk" => self.handle_export_sdef_to_disk(args_value),
             "import_sdef" => self.handle_import_sdef(args_value),
             "export_shard" => self.handle_export_shard(args_value),
             "import_shard" => self.handle_import_shard(args_value),
@@ -654,6 +655,19 @@ impl CleanroomMcpServer {
             serde_json::to_string_pretty(&sdef).map_err(|e| e.to_string())?
         };
         Ok(json!({"sdef_content": result, "format": p.format}))
+    }
+
+    fn handle_export_sdef_to_disk(&self, args: Value) -> Result<Value, String> {
+        use std::path::Path;
+        #[derive(serde::Deserialize)]
+        struct P { document_name: String, output_dir: String }
+        let p: P = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let exporter = cleanroom_db::export_import::SdefFileExporter::new(
+            (*self.db).clone(),
+        );
+        let root = exporter.export_to_disk(&p.document_name, Path::new(&p.output_dir))
+            .map_err(|e| e.to_string())?;
+        Ok(json!({"output_path": root.to_string_lossy().to_string(), "ok": true}))
     }
 
     fn handle_import_sdef(&self, args: Value) -> Result<Value, String> {
@@ -1441,6 +1455,7 @@ fn all_tools() -> Vec<Tool> {
 
         // Import/Export
         make_tool::<ExportSdefParams>("export_sdef", "mcp.export_sdef", true),
+        make_tool::<ExportSdefDiskParams>("export_sdef_to_disk", "mcp.export_sdef_to_disk", false),
         make_tool::<ImportSdefParams>("import_sdef", "mcp.import_sdef", false),
         make_tool::<ExportShardParams>("export_shard", "mcp.export_shard", true),
         make_tool::<ImportShardParams>("import_shard", "mcp.import_shard", false),

@@ -49,7 +49,7 @@
     "inspect_db": "数据库：{0}",
     "inspect_inconsistent": "不一致的指纹：{0}",
     "inspect_total_fp": "总指纹数：{0}",
-    "inspect_consistency": "一致性：{0:.1}%",
+    "inspect_consistency": "一致性：{0}%",
     "inspect_coverage": "S.DEF 覆盖率：",
     "inspect_data_models": "  数据模型：    {0}",
     "inspect_attributes": "  属性：        {0}",
@@ -136,6 +136,7 @@
     "register_custom_name": "手动注册自定义名称",
 
     "export_sdef": "导出完整 S.DEF（JSON/YAML）",
+    "export_sdef_to_disk": "将 S.DEF 导出到磁盘作为分片文件树（含 .sdef-state 目录）",
     "import_sdef": "从 JSON 导入 S.DEF 到数据库",
 
     "create_checkpoint": "创建全局检查点",
