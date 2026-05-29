@@ -185,6 +185,14 @@ pub fn default_lsp_configs() -> Vec<LspConfig> {
             extensions: vec!["go".to_string()],
             idle_timeout_secs: 600,
         },
+        // C / C++
+        LspConfig {
+            language_id: "c".to_string(),
+            command: "clangd".to_string(),
+            args: vec![],
+            extensions: vec!["c".to_string(), "h".to_string()],
+            idle_timeout_secs: 600,
+        },
     ]
 }
 

@@ -3,6 +3,7 @@
 pub mod rust_gen;
 pub mod typescript_gen;
 pub mod python_gen;
+pub mod c_gen;
 pub mod templates;
 
 use sdef_core::{DataModel, InterfaceContract, ClassContract, FunctionSpec};
@@ -46,6 +47,7 @@ pub fn create_generator(language: &str) -> Option<Box<dyn CodeGenerator + Send +
         "typescript" | "ts" => Some(Box::new(typescript_gen::TypeScriptGenerator)),
         "javascript" | "js" => Some(Box::new(typescript_gen::TypeScriptGenerator)),
         "python" | "py" => Some(Box::new(python_gen::PythonGenerator)),
+        "c" | "c++" | "cpp" | "h" => Some(Box::new(c_gen::CGenerator)),
         _ => None,
     }
 }

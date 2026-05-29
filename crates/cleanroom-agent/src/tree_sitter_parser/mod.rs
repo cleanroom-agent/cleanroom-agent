@@ -18,6 +18,7 @@
 pub mod rust_parser;
 pub mod typescript_parser;
 pub mod python_parser;
+pub mod c_parser;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -87,8 +88,11 @@ pub fn init_builtin_grammars() {
     // Python grammar
     register_grammar("python", Language::new(tree_sitter_python::LANGUAGE));
 
+    // C grammar
+    register_grammar("c", Language::new(tree_sitter_c::LANGUAGE));
+
     info!(
-        "Initialized built-in tree-sitter grammars: rust, typescript, javascript, python"
+        "Initialized built-in tree-sitter grammars: rust, typescript, javascript, python, c"
     );
 }
 
