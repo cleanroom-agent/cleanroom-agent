@@ -1230,10 +1230,49 @@ impl CleanroomMcpServer {
     fn handle_list_compat_layers(&self, args: Value) -> Result<Value, String> {
         use tools::compat_tools::ListCompatLayersParams;
         let p: ListCompatLayersParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        // Query from database; for now return empty list
+        let conn = self.new_conn();
+
+        // Query deprecated/legacy contracts
+        let mut layers = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT name, contract_type, status, deprecated_json, compatibility_json
+             FROM contracts WHERE document_name = ?1
+             AND (status IN ('deprecated', 'legacy') OR deprecated_json IS NOT NULL)"
+        ) {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![&p.document_name], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            }) {
+                for row in rows.flatten() {
+                    let (name, ctype, status, dep_json, compat_json) = row;
+                    let dep_info: Option<Value> = dep_json.as_ref()
+                        .and_then(|j| serde_json::from_str(j).ok());
+                    let compat_info: Option<Value> = compat_json.as_ref()
+                        .and_then(|j| serde_json::from_str(j).ok());
+                    let is_ignored = status == "active" && dep_json.as_ref().is_some();
+
+                    layers.push(json!({
+                        "layer_id": format!("{}/{}", ctype, name),
+                        "name": name,
+                        "contract_type": ctype,
+                        "status": status,
+                        "deprecated_info": dep_info,
+                        "compatibility_info": compat_info,
+                        "is_ignored": is_ignored,
+                    }));
+                }
+            }
+        }
+
         Ok(json!({
             "document_name": p.document_name,
-            "layers": [],
+            "layers": layers,
+            "layer_count": layers.len(),
             "current_mode": "full",
         }))
     }
@@ -1241,21 +1280,112 @@ impl CleanroomMcpServer {
     fn handle_get_compat_layer(&self, args: Value) -> Result<Value, String> {
         use tools::compat_tools::GetCompatLayerParams;
         let p: GetCompatLayerParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        Ok(json!({
-            "document_name": p.document_name,
-            "layer_id": p.layer_id,
-            "note": "Layer detail query dispatched. Compatibility data stored in contracts table.",
-        }))
+        let conn = self.new_conn();
+
+        // Parse layer_id as contract_type/name
+        let (ctype, cname) = match p.layer_id.split_once('/') {
+            Some((t, n)) => (t.to_string(), n.to_string()),
+            None => {
+                // Try direct name match
+                (String::new(), p.layer_id.clone())
+            }
+        };
+
+        // Query contract details
+        let result = if ctype.is_empty() {
+            // Search by name only
+            let mut stmt = conn.prepare(
+                "SELECT name, contract_type, status, version, description, deprecated_json,
+                        compatibility_json, implements_json, invariants_json
+                 FROM contracts WHERE document_name = ?1 AND name = ?2"
+            ).map_err(|e| e.to_string())?;
+            stmt.query_row(rusqlite::params![&p.document_name, &cname], |row| {
+                Ok(json!({
+                    "name": row.get::<_, String>(0)?,
+                    "contract_type": row.get::<_, String>(1)?,
+                    "status": row.get::<_, String>(2)?,
+                    "version": row.get::<_, Option<String>>(3)?,
+                    "description": row.get::<_, Option<String>>(4)?,
+                    "deprecated_json": row.get::<_, Option<String>>(5)?,
+                    "compatibility_json": row.get::<_, Option<String>>(6)?,
+                    "implements": row.get::<_, Option<String>>(7)?,
+                    "invariants": row.get::<_, Option<String>>(8)?,
+                }))
+            }).map_err(|e| e.to_string())
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT name, contract_type, status, version, description, deprecated_json,
+                        compatibility_json, implements_json, invariants_json
+                 FROM contracts WHERE document_name = ?1 AND contract_type = ?2 AND name = ?3"
+            ).map_err(|e| e.to_string())?;
+            stmt.query_row(
+                rusqlite::params![&p.document_name, &ctype, &cname],
+                |row| {
+                    Ok(json!({
+                        "name": row.get::<_, String>(0)?,
+                        "contract_type": row.get::<_, String>(1)?,
+                        "status": row.get::<_, String>(2)?,
+                        "version": row.get::<_, Option<String>>(3)?,
+                        "description": row.get::<_, Option<String>>(4)?,
+                        "deprecated_json": row.get::<_, Option<String>>(5)?,
+                        "compatibility_json": row.get::<_, Option<String>>(6)?,
+                        "implements": row.get::<_, Option<String>>(7)?,
+                        "invariants": row.get::<_, Option<String>>(8)?,
+                    }))
+                },
+            ).map_err(|e| e.to_string())
+        };
+
+        match result {
+            Ok(detail) => Ok(json!({
+                "document_name": p.document_name,
+                "layer_id": p.layer_id,
+                "detail": detail,
+            })),
+            Err(e) => Err(format!("Compat layer '{}' not found: {}", p.layer_id, e)),
+        }
     }
 
     fn handle_ignore_compat_layer(&self, args: Value) -> Result<Value, String> {
         use tools::compat_tools::IgnoreCompatLayerParams;
         let p: IgnoreCompatLayerParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let conn = self.new_conn();
+
+        // Parse layer_id: "interface/MyService" or just "MyService"
+        let (_ctype, cname) = match p.layer_id.split_once('/') {
+            Some((t, n)) => (t.to_string(), n.to_string()),
+            None => (String::new(), p.layer_id.clone()),
+        };
+
+        // Mark as active (ignore deprecation) — update status from deprecated/legacy → active
+        let updated = conn.execute(
+            "UPDATE contracts SET status = 'active' WHERE document_name = ?1 AND name = ?2
+             AND status IN ('deprecated', 'legacy')",
+            rusqlite::params![&p.document_name, &cname],
+        ).map_err(|e| e.to_string())?;
+
+        // Record in audit_log
+        if updated > 0 {
+            conn.execute(
+                "INSERT INTO audit_log (actor, action, resource_type, resource_id, new_value_json)
+                 VALUES ('user', 'ignore_compat', 'contract', ?1, ?2)",
+                rusqlite::params![
+                    &p.layer_id,
+                    &serde_json::json!({"status": "active", "layer_id": p.layer_id}).to_string(),
+                ],
+            ).ok();
+        }
+
         Ok(json!({
             "ok": true,
             "document_name": p.document_name,
             "layer_id": p.layer_id,
-            "message": format!("Compatibility layer '{}' marked as resolved/ignored", p.layer_id),
+            "updated": updated > 0,
+            "message": if updated > 0 {
+                format!("Compatibility layer '{}' marked as resolved", p.layer_id)
+            } else {
+                format!("Compat layer '{}' already active or not found", p.layer_id)
+            },
         }))
     }
 }
