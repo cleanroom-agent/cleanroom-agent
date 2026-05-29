@@ -402,6 +402,7 @@ fn build_export_sdef(
     sdef.version = version;
     sdef.description = description;
 
+    // 1. Data models
     let mut stmt = conn.prepare(
         "SELECT entity, status, version, description, logical_model FROM data_models WHERE document_name = ?1"
     ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -412,9 +413,9 @@ fn build_export_sdef(
     let mut models = Vec::new();
     while let Some(row) = rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
         let entity: String = row.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let status: Option<String> = row.get(1).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let version: Option<String> = row.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let description: Option<String> = row.get(3).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let dm_status: Option<String> = row.get(1).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let dm_version: Option<String> = row.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let dm_description: Option<String> = row.get(3).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         let mut attr_stmt = conn.prepare(
             "SELECT name, attr_type, format, description, required, identity, generated, unique_flag, internal, deprecated
@@ -447,10 +448,10 @@ fn build_export_sdef(
 
         models.push(sdef_core::DataModel {
             entity,
-            status,
-            version,
+            status: dm_status,
+            version: dm_version,
             deprecated: None,
-            description,
+            description: dm_description,
             logical_model: None,
             attributes: if attrs.is_empty() { None } else { Some(attrs) },
             relationships: None,
@@ -465,8 +466,230 @@ fn build_export_sdef(
         sdef.data_models = Some(models);
     }
 
-    let count = sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0);
-    println!("{}", tr_global!("cli.export_data_models", count));
+    let dm_count = sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0);
+    println!("{}", tr_global!("cli.export_data_models", dm_count));
+
+    // 2. Design decisions
+    let mut dd_stmt = conn.prepare(
+        "SELECT id, topic, decision, rationale, context, alternatives_json, consequences_json, constraints_json
+         FROM design_decisions WHERE document_name = ?1"
+    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut dd_rows = dd_stmt.query(rusqlite::params![name])
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut decisions = Vec::new();
+    while let Some(row) = dd_rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
+        let alternatives: Option<Vec<String>> = row.get::<_, Option<String>>(5)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .and_then(|s| serde_json::from_str(&s).ok());
+        let consequences: Option<Vec<String>> = row.get::<_, Option<String>>(6)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .and_then(|s| serde_json::from_str(&s).ok());
+        let constraints: Option<Vec<String>> = row.get::<_, Option<String>>(7)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .and_then(|s| serde_json::from_str(&s).ok());
+
+        decisions.push(sdef_core::DesignDecision {
+            id: row.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            topic: row.get(1).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            decision: row.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            rationale: row.get(3).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            context: row.get(4).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            alternatives,
+            consequences,
+            constraints,
+        });
+    }
+    drop(dd_rows);
+    drop(dd_stmt);
+    if !decisions.is_empty() {
+        sdef.design_decisions = Some(decisions);
+    }
+
+    // 3. Architecture layers
+    let mut arch_stmt = conn.prepare(
+        "SELECT layer_name, components_json FROM architecture_layers WHERE document_name = ?1"
+    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut arch_rows = arch_stmt.query(rusqlite::params![name])
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut layers = Vec::new();
+    while let Some(row) = arch_rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
+        let components: Option<Vec<String>> = row.get::<_, Option<String>>(1)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .and_then(|s| serde_json::from_str(&s).ok());
+        layers.push(sdef_core::ArchitectureLayer {
+            name: row.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            components,
+        });
+    }
+    drop(arch_rows);
+    drop(arch_stmt);
+    if !layers.is_empty() {
+        sdef.architecture = Some(sdef_core::Architecture {
+            style: None,
+            rationale: None,
+            layers: Some(layers),
+            modules: None,
+            communication: None,
+            cross_cutting_concerns: None,
+        });
+    }
+
+    // 4. Functions
+    let mut fn_stmt = conn.prepare(
+        "SELECT id, name, description, logic, complexity, pure_function
+         FROM function_specs WHERE document_name = ?1 ORDER BY id"
+    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut fn_rows = fn_stmt.query(rusqlite::params![name])
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut functions = Vec::new();
+    while let Some(row) = fn_rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
+        let func_id: i64 = row.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        // Query input params
+        let mut in_stmt = conn.prepare(
+            "SELECT name, param_type, description FROM function_params
+             WHERE function_id = ?1 AND param_direction = 'input'"
+        ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut in_rows = in_stmt.query(rusqlite::params![func_id])
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut inputs = Vec::new();
+        while let Some(ir) = in_rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
+            inputs.push(sdef_core::FunctionParam {
+                name: ir.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                param_type: ir.get(1).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                description: ir.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            });
+        }
+        drop(in_rows);
+        drop(in_stmt);
+
+        // Query output params
+        let mut out_stmt = conn.prepare(
+            "SELECT name, param_type, description FROM function_params
+             WHERE function_id = ?1 AND param_direction = 'output'"
+        ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut out_rows = out_stmt.query(rusqlite::params![func_id])
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut outputs = Vec::new();
+        while let Some(or) = out_rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
+            outputs.push(sdef_core::FunctionParam {
+                name: or.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                param_type: or.get(1).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                description: or.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            });
+        }
+        drop(out_rows);
+        drop(out_stmt);
+
+        functions.push(sdef_core::FunctionSpec {
+            name: row.get(1).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            description: row.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            inputs: if inputs.is_empty() { None } else { Some(inputs) },
+            outputs: if outputs.is_empty() { None } else { Some(outputs) },
+            logic: row.get(3).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            complexity: row.get(4).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            pure_function: row.get(5).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            edge_cases: None,
+        });
+    }
+    drop(fn_rows);
+    drop(fn_stmt);
+    if !functions.is_empty() {
+        sdef.behavior = Some(sdef_core::Behavior {
+            functions: Some(functions),
+            flows: None,
+            state_machines: None,
+        });
+    }
+
+    // 5. Contracts (interfaces)
+    let mut c_stmt = conn.prepare(
+        "SELECT name, is_abstract, status, version, description, invariants_json
+         FROM contracts WHERE document_name = ?1 AND contract_type = 'interface'"
+    ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut c_rows = c_stmt.query(rusqlite::params![name])
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut interfaces = Vec::new();
+    while let Some(row) = c_rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
+        let cname: String = row.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        // Query methods
+        let mut m_stmt = conn.prepare(
+            "SELECT signature, status, behavior, preconditions_json, postconditions_json, errors_json
+             FROM contract_methods WHERE document_name = ?1 AND contract_name = ?2"
+        ).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        let mut m_rows = m_stmt.query(rusqlite::params![name, &cname])
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        let mut methods = Vec::new();
+        while let Some(mr) = m_rows.next().map_err(|e| anyhow::anyhow!(e.to_string()))? {
+            let preconds: Option<Vec<String>> = mr.get::<_, Option<String>>(3)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .and_then(|s| serde_json::from_str(&s).ok());
+            let postconds: Option<Vec<String>> = mr.get::<_, Option<String>>(4)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .and_then(|s| serde_json::from_str(&s).ok());
+            let errors: Option<Vec<String>> = mr.get::<_, Option<String>>(5)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .and_then(|s| serde_json::from_str(&s).ok());
+
+            methods.push(sdef_core::ContractMethod {
+                signature: mr.get(0).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                status: mr.get(1).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                deprecated: None,
+                behavior: mr.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                preconditions: preconds,
+                postconditions: postconds,
+                errors,
+            });
+        }
+        drop(m_rows);
+        drop(m_stmt);
+
+        let invariants: Option<Vec<String>> = row.get::<_, Option<String>>(5)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .and_then(|s| serde_json::from_str(&s).ok());
+
+        interfaces.push(sdef_core::InterfaceContract {
+            name: cname,
+            is_abstract: row.get::<_, bool>(1).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            status: row.get(2).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            version: row.get(3).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            deprecated: None,
+            description: row.get(4).map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            methods: if methods.is_empty() { None } else { Some(methods) },
+            invariants,
+        });
+    }
+    drop(c_rows);
+    drop(c_stmt);
+    if !interfaces.is_empty() {
+        sdef.contracts = Some(sdef_core::Contracts {
+            interfaces: Some(interfaces),
+            classes: None,
+            enums: None,
+            apis: None,
+            compatibility_modules: None,
+            data_migrations: None,
+        });
+    }
+
+    let dm_len = sdef.data_models.as_ref().map(|v| v.len()).unwrap_or(0);
+    let dd_len = sdef.design_decisions.as_ref().map(|v| v.len()).unwrap_or(0);
+    let iface_len = sdef.contracts.as_ref().and_then(|c| c.interfaces.as_ref()).map(|v| v.len()).unwrap_or(0);
+    let fn_len = sdef.behavior.as_ref().and_then(|b| b.functions.as_ref()).map(|v| v.len()).unwrap_or(0);
+
+    println!("Exported {} data models, {} design decisions, {} interfaces, {} functions",
+        dm_len, dd_len, iface_len, fn_len);
     Ok(sdef)
 }
 

@@ -172,7 +172,7 @@ pub fn known_grammars() -> Vec<GrammarDescriptor> {
             extensions: &["c", "h"],
             top_level_nodes: &[
                 "struct_specifier", "enum_specifier",
-                "function_definition",
+                "function_definition", "type_definition",
             ],
         },
     ]
@@ -254,6 +254,43 @@ fn extract_top_level_node(
         "struct_specifier" => c_parser::extract_c_struct(node, source),
         "enum_specifier" => c_parser::extract_c_enum(node, source),
         "function_definition" => c_parser::extract_c_function(node, source),
+        "type_definition" => {
+            // typedef struct { ... } Name; or typedef enum { ... } Name;
+            // Look for the type (struct_specifier or enum_specifier) inside
+            if let Some(inner) = node.child_by_field_name("type") {
+                let entity = match inner.kind() {
+                    "struct_specifier" => c_parser::extract_c_struct(&inner, source),
+                    "enum_specifier" => c_parser::extract_c_enum(&inner, source),
+                    _ => None,
+                };
+                if entity.is_some() {
+                    return entity;
+                }
+                // Fallback: handle anonymous struct/enum with typedef name in declarator
+                if let Some(decl) = node.child_by_field_name("declarator") {
+                    if let Ok(decl_name) = decl.utf8_text(source.as_bytes()) {
+                        let name = decl_name.trim().to_string();
+                        if !name.is_empty() {
+                            // Use the dedicated C struct field extractor for anonymous structs
+                            match inner.kind() {
+                                "struct_specifier" => {
+                                    let attrs = c_parser::extract_c_struct_fields(&inner, source);
+                                    return Some(IrEntity::DataModel {
+                                        name,
+                                        description: None,
+                                        attributes: attrs,
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                None
+            } else {
+                None
+            }
+        }
         _ => {
             // Non-C languages: all have a "name" field on top-level nodes
             let name_node = node.child_by_field_name("name")?;

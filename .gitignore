@@ -47,3 +47,6 @@ sdef-output/
 *.dylib
 *.dll
 *.exe
+
+# generated code
+generated/

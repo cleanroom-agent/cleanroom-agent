@@ -57,7 +57,7 @@
     "inspect_functions": "  函数：        {0}",
     "inspect_symbols": "  符号：        {0}",
     "inspect_task_progress": "任务进度：",
-    "inspect_task_line": "  {0:<20}：{1:>4}（{2:.1}%）",
+    "inspect_task_line": "  {0}：{1}（{2}%）",
     "inspect_unknown_check": "未知的检查类型：{0}",
     "inspect_no_db": "在 '{0}' 未找到数据库。请先运行 'cleanroom produce'。",
 

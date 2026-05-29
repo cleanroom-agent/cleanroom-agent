@@ -119,7 +119,7 @@ impl CodeGenerator for RustGenerator {
         let mut output = String::new();
         
         // Derives
-        let mut derives = vec!["Debug", "Clone"];
+        let mut derives: Vec<String> = vec!["Debug".to_string(), "Clone".to_string()];
         if let Some(implements) = &class.implements {
             if !implements.is_empty() {
                 derives.extend(implements.iter().cloned());

@@ -54,7 +54,7 @@ pub fn extract_c_declarations(
 }
 
 /// Extract a C struct as IrEntity::DataModel.
-fn extract_c_struct(node: &Node, source: &str) -> Option<IrEntity> {
+pub(crate) fn extract_c_struct(node: &Node, source: &str) -> Option<IrEntity> {
     let name_node = node.child_by_field_name("name")?;
     let name = name_node.utf8_text(source.as_bytes()).ok()?.to_string();
 
@@ -91,6 +91,32 @@ fn extract_c_struct(node: &Node, source: &str) -> Option<IrEntity> {
     })
 }
 
+/// Extract fields from a C struct node (without name, for anonymous structs).
+pub(crate) fn extract_c_struct_fields(node: &Node, source: &str) -> Vec<IrAttribute> {
+    let mut attrs = Vec::new();
+    if let Some(body) = node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "field_declaration" {
+                let field_name = child.child_by_field_name("declarator")
+                    .and_then(|d| find_field_name(d, source))
+                    .unwrap_or("unnamed");
+                let field_type = child.child_by_field_name("type")
+                    .and_then(|t| t.utf8_text(source.as_bytes()).ok())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                attrs.push(IrAttribute {
+                    name: field_name.to_string(),
+                    attr_type: field_type,
+                    description: None,
+                    required: true,
+                });
+            }
+        }
+    }
+    attrs
+}
+
 /// Find the field name from a declarator node (handles pointers, arrays).
 fn find_field_name<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
     // Try direct identifier
@@ -124,7 +150,7 @@ fn find_field_name<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
 }
 
 /// Extract a C enum as IrEntity::DataModel (with enum values as attrs).
-fn extract_c_enum(node: &Node, source: &str) -> Option<IrEntity> {
+pub(crate) fn extract_c_enum(node: &Node, source: &str) -> Option<IrEntity> {
     let name_node = node.child_by_field_name("name")?;
     let name = name_node.utf8_text(source.as_bytes()).ok()?.to_string();
 
@@ -155,7 +181,7 @@ fn extract_c_enum(node: &Node, source: &str) -> Option<IrEntity> {
 }
 
 /// Extract a C function as IrEntity::Function.
-fn extract_c_function(node: &Node, source: &str) -> Option<IrEntity> {
+pub(crate) fn extract_c_function(node: &Node, source: &str) -> Option<IrEntity> {
     let declarator = node.child_by_field_name("declarator")?;
 
     // Find the function name by looking through pointer/identifier chains

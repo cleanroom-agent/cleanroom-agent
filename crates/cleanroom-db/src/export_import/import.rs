@@ -46,7 +46,7 @@ impl SdefImporter {
                     .unwrap_or_else(|| "active".to_string());
 
                 conn.execute(
-                    "INSERT INTO data_models (entity, document_name, status, version, description, logical_model)
+                    "INSERT OR IGNORE INTO data_models (entity, document_name, status, version, description, logical_model)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
                         model.entity,
@@ -102,7 +102,7 @@ impl SdefImporter {
         if let Some(decisions) = &sdef.design_decisions {
             for decision in decisions {
                 conn.execute(
-                    "INSERT INTO design_decisions (id, document_name, topic, decision, rationale, context, alternatives_json, consequences_json)
+                    "INSERT OR IGNORE INTO design_decisions (id, document_name, topic, decision, rationale, context, alternatives_json, consequences_json)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         decision.id,
@@ -124,7 +124,7 @@ impl SdefImporter {
             if let Some(functions) = &behavior.functions {
                 for func in functions {
                     conn.execute(
-                        "INSERT INTO function_specs (document_name, name, description, logic, complexity, pure_function)
+                        "INSERT OR IGNORE INTO function_specs (document_name, name, description, logic, complexity, pure_function)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                         params![
                             doc_name,
