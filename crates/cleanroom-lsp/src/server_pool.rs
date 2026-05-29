@@ -1,20 +1,19 @@
 //! LSP server pool management.
 //!
 //! Manages multiple LSP server subprocesses with:
-//! - Lazy initialization (servers started on demand)
+//! - Lazy initialization (servers started on demand via `LspClient`)
 //! - Idle timeout auto-shutdown
 //! - Maximum concurrent server limit
 
 use std::collections::HashMap;
 use std::fmt;
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use lsp_types::ServerCapabilities;
-use tokio::process::{Child, Command};
 use tracing::{info, warn};
 
+use super::client::LspClient;
 use super::error::{LspError, LspResult};
 
 /// LSP server configuration for a language.
@@ -22,27 +21,20 @@ use super::error::{LspError, LspResult};
 pub struct LspConfig {
     /// Language identifier.
     pub language_id: String,
-
     /// Command to start the LSP server.
     pub command: String,
-
     /// Command arguments.
     pub args: Vec<String>,
-
     /// File extensions this server handles.
     pub extensions: Vec<String>,
-
     /// Idle timeout in seconds before server shutdown.
     pub idle_timeout_secs: u64,
 }
 
 /// Runtime state of an LSP server.
 struct ServerState {
-    /// Handle for tool invocation.
+    /// Handle for tool invocation (wraps LspClient).
     handle: LspServerHandle,
-    /// The child process (dropped on shutdown).
-    #[allow(dead_code)]
-    child: Option<Child>,
     /// When the server was last used.
     last_used: Instant,
     /// Language ID this server serves.
@@ -52,27 +44,119 @@ struct ServerState {
 }
 
 /// An LSP server handle for invoking tools.
-#[derive(Debug, Clone)]
+///
+/// Provides methods that delegate to the underlying `LspClient`.
+#[derive(Clone)]
 pub struct LspServerHandle {
     /// Server capabilities.
     pub capabilities: ServerCapabilities,
     /// Language this server handles.
     pub language: String,
+    /// Shared state for the running client.
+    inner: Arc<Mutex<Option<LspClient>>>,
 }
 
 impl LspServerHandle {
-    fn new(language: String) -> Self {
+    /// Create a new stub handle (for fallback when server can't start).
+    fn new_stub(language: String) -> Self {
         Self {
             capabilities: ServerCapabilities::default(),
             language,
+            inner: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Create a handle backed by a running LspClient.
+    fn new(client: LspClient) -> Self {
+        let language = client.language.clone();
+        Self {
+            capabilities: ServerCapabilities::default(),
+            language,
+            inner: Arc::new(Mutex::new(Some(client))),
+        }
+    }
+
+    /// Check if the underlying LSP client is available.
+    pub fn is_connected(&self) -> bool {
+        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    /// Open a document in the LSP server.
+    pub fn did_open(&self, file_path: &str, text: &str, language_id: &str) -> LspResult<()> {
+        let guard = self.inner.lock().map_err(|e| LspError::CommunicationError(e.to_string()))?;
+        match guard.as_ref() {
+            Some(client) => client.did_open(file_path, text, language_id),
+            None => Err(LspError::ServerNotAvailable("LSP client not initialized".to_string())),
+        }
+    }
+
+    /// Get document symbols.
+    pub fn document_symbols(&self, file_path: &str) -> LspResult<Vec<super::file_analysis::DocumentSymbol>> {
+        let guard = self.inner.lock().map_err(|e| LspError::CommunicationError(e.to_string()))?;
+        match guard.as_ref() {
+            Some(client) => client.document_symbols(file_path),
+            None => Err(LspError::ServerNotAvailable("LSP client not initialized".to_string())),
+        }
+    }
+
+    /// Get type info at a position via hover.
+    pub fn hover(&self, file_path: &str, line: u32, character: u32) -> LspResult<Option<super::file_analysis::TypeInfo>> {
+        let guard = self.inner.lock().map_err(|e| LspError::CommunicationError(e.to_string()))?;
+        match guard.as_ref() {
+            Some(client) => client.hover(file_path, line, character),
+            None => Err(LspError::ServerNotAvailable("LSP client not initialized".to_string())),
+        }
+    }
+
+    /// Find references at a position.
+    pub fn find_references(&self, file_path: &str, line: u32, character: u32) -> LspResult<Vec<lsp_types::Location>> {
+        let guard = self.inner.lock().map_err(|e| LspError::CommunicationError(e.to_string()))?;
+        match guard.as_ref() {
+            Some(client) => client.find_references(file_path, line, character),
+            None => Err(LspError::ServerNotAvailable("LSP client not initialized".to_string())),
+        }
+    }
+
+    /// Get diagnostics for a document.
+    pub fn diagnostics(&self, file_path: &str) -> LspResult<Vec<super::file_analysis::Diagnostic>> {
+        let guard = self.inner.lock().map_err(|e| LspError::CommunicationError(e.to_string()))?;
+        match guard.as_ref() {
+            Some(client) => client.diagnostics(file_path),
+            None => Err(LspError::ServerNotAvailable("LSP client not initialized".to_string())),
+        }
+    }
+
+    /// Get type hierarchy (supertypes).
+    pub fn type_hierarchy(&self, file_path: &str, line: u32, character: u32) -> LspResult<super::file_analysis::TypeHierarchy> {
+        let guard = self.inner.lock().map_err(|e| LspError::CommunicationError(e.to_string()))?;
+        match guard.as_ref() {
+            Some(client) => client.type_hierarchy(file_path, line, character),
+            None => Err(LspError::ServerNotAvailable("LSP client not initialized".to_string())),
+        }
+    }
+
+    /// Full file analysis.
+    pub fn analyze_file(&self, file_path: &str, language_id: &str) -> LspResult<super::file_analysis::FileAnalysis> {
+        let guard = self.inner.lock().map_err(|e| LspError::CommunicationError(e.to_string()))?;
+        match guard.as_ref() {
+            Some(client) => client.analyze_file(file_path, language_id),
+            None => Err(LspError::ServerNotAvailable("LSP client not initialized".to_string())),
+        }
+    }
+}
+
+impl fmt::Debug for LspServerHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LspServerHandle")
+            .field("language", &self.language)
+            .field("connected", &self.is_connected())
+            .finish()
     }
 }
 
 /// Default LSP configurations.
 pub fn default_lsp_configs() -> Vec<LspConfig> {
     vec![
-        // TypeScript/JavaScript
         LspConfig {
             language_id: "typescript".to_string(),
             command: "typescript-language-server".to_string(),
@@ -80,7 +164,6 @@ pub fn default_lsp_configs() -> Vec<LspConfig> {
             extensions: vec!["ts".to_string(), "tsx".to_string(), "js".to_string(), "jsx".to_string()],
             idle_timeout_secs: 300,
         },
-        // Rust
         LspConfig {
             language_id: "rust".to_string(),
             command: "rust-analyzer".to_string(),
@@ -88,7 +171,6 @@ pub fn default_lsp_configs() -> Vec<LspConfig> {
             extensions: vec!["rs".to_string()],
             idle_timeout_secs: 600,
         },
-        // Python
         LspConfig {
             language_id: "python".to_string(),
             command: "pyright-langserver".to_string(),
@@ -96,7 +178,6 @@ pub fn default_lsp_configs() -> Vec<LspConfig> {
             extensions: vec!["py".to_string()],
             idle_timeout_secs: 300,
         },
-        // Go
         LspConfig {
             language_id: "go".to_string(),
             command: "gopls".to_string(),
@@ -109,16 +190,9 @@ pub fn default_lsp_configs() -> Vec<LspConfig> {
 
 /// Server pool that manages multiple LSP servers.
 pub struct LspServerPool {
-    /// Server configurations.
     configs: HashMap<String, LspConfig>,
-
-    /// Running servers with runtime state.
     servers: Arc<Mutex<HashMap<String, ServerState>>>,
-
-    /// Maximum concurrent servers.
     max_concurrent: usize,
-
-    /// Whether idle timeout background task is running.
     idle_monitor_running: Arc<Mutex<bool>>,
 }
 
@@ -129,7 +203,6 @@ impl LspServerPool {
         for config in default_lsp_configs() {
             configs.insert(config.language_id.clone(), config);
         }
-
         Self {
             configs,
             servers: Arc::new(Mutex::new(HashMap::new())),
@@ -178,7 +251,7 @@ impl LspServerPool {
 
     /// Get or start an LSP server for a language.
     pub async fn get_server(&self, language: &str) -> LspResult<LspServerHandle> {
-        // Check if server is already running and update last_used
+        // Check if server is already running
         {
             let mut servers = self.servers.lock().unwrap();
             if let Some(state) = servers.get_mut(language) {
@@ -187,23 +260,20 @@ impl LspServerPool {
             }
         }
 
-        // Check concurrent limit before starting a new server
+        // Check concurrent limit
         {
             let servers = self.servers.lock().unwrap();
             if servers.len() >= self.max_concurrent {
                 return Err(LspError::ServerNotAvailable(format!(
-                    "Max concurrent servers ({}) reached. Try again later or stop an idle server.",
-                    self.max_concurrent
+                    "Max concurrent servers ({}) reached", self.max_concurrent
                 )));
             }
         }
 
-        // Get configuration
         let config = self.configs.get(language).ok_or_else(|| {
             LspError::UnsupportedLanguage(language.to_string())
         })?;
 
-        // Start new server
         self.start_server(config).await
     }
 
@@ -211,51 +281,46 @@ impl LspServerPool {
     async fn start_server(&self, config: &LspConfig) -> LspResult<LspServerHandle> {
         info!(language = %config.language_id, command = %config.command, "Starting LSP server");
 
-        // Attempt to spawn the process; warn on failure but still create a stub handle
-        let child = match Command::new(&config.command)
-            .args(&config.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-        {
-            Ok(c) => Some(c),
+        // Try to spawn and initialize the LSP client
+        let handle = match LspClient::spawn(
+            &config.command,
+            &config.args,
+            &config.language_id,
+            ".",
+        ) {
+            Ok(client) => {
+                info!(language = %config.language_id, "LSP client initialized successfully");
+                LspServerHandle::new(client)
+            }
             Err(e) => {
                 warn!(language = %config.language_id, error = %e,
-                    "LSP server process failed to start, using stub handle");
-                None
+                    "LSP server process failed to start/spawn, using stub handle");
+                LspServerHandle::new_stub(config.language_id.clone())
             }
         };
 
-        let handle = LspServerHandle::new(config.language_id.clone());
         let idle_timeout = Duration::from_secs(config.idle_timeout_secs);
 
         let state = ServerState {
             handle: handle.clone(),
-            child,
             last_used: Instant::now(),
             language: config.language_id.clone(),
             idle_timeout,
         };
 
-        // Store in pool
         {
             let mut servers = self.servers.lock().unwrap();
             servers.insert(config.language_id.clone(), state);
         }
 
-        // Start idle monitor on first server start
         self.ensure_idle_monitor();
-
         Ok(handle)
     }
 
-    /// Start the background idle timeout monitor if not already running.
+    /// Start the background idle timeout monitor.
     fn ensure_idle_monitor(&self) {
         let mut running = self.idle_monitor_running.lock().unwrap();
-        if *running {
-            return;
-        }
+        if *running { return; }
         *running = true;
         drop(running);
 
@@ -270,8 +335,7 @@ impl LspServerPool {
                 {
                     let map = servers.lock().unwrap();
                     for (lang, state) in map.iter() {
-                        let elapsed = now.duration_since(state.last_used);
-                        if elapsed >= state.idle_timeout {
+                        if now.duration_since(state.last_used) >= state.idle_timeout {
                             to_remove.push(lang.clone());
                         }
                     }
@@ -280,7 +344,6 @@ impl LspServerPool {
                 for lang in &to_remove {
                     info!(language = %lang, "Shutting down idle LSP server");
                     let mut map = servers.lock().unwrap();
-                    // Double-check that the server hasn't been used since we checked
                     if let Some(state) = map.get(lang) {
                         if now.duration_since(state.last_used) >= state.idle_timeout {
                             map.remove(lang);
@@ -288,9 +351,8 @@ impl LspServerPool {
                     }
                 }
 
-                // Stop the monitor if no servers are running
                 if servers.lock().unwrap().is_empty() {
-                    // Servers are empty; continue monitoring in case new ones start later
+                    // Continue monitoring in case new servers start
                 }
             }
         });
@@ -321,9 +383,7 @@ impl LspServerPool {
 }
 
 impl Default for LspServerPool {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 impl fmt::Debug for LspServerPool {

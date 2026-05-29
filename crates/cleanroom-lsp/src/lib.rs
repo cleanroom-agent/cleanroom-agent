@@ -2,11 +2,13 @@
 
 #![warn(missing_docs)]
 
+pub mod client;
 pub mod error;
 pub mod server_pool;
 pub mod file_analysis;
 pub mod language_detection;
 
+pub use client::LspClient;
 pub use error::{LspError, LspResult};
 pub use server_pool::{LspConfig, LspServerPool, LspServerHandle};
 pub use file_analysis::{

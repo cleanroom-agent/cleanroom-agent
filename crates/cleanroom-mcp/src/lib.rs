@@ -978,6 +978,7 @@ impl CleanroomMcpServer {
         Ok(json!({
             "initialized": true,
             "language": handle.language,
+            "connected": handle.is_connected(),
             "server_info": format!("{} LSP server", p.language),
         }))
     }
@@ -985,56 +986,101 @@ impl CleanroomMcpServer {
     fn handle_lsp_get_document_symbols(&self, args: Value) -> Result<Value, String> {
         use tools::lsp_tools::LspDocumentSymbolsParams;
         let p: LspDocumentSymbolsParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        Ok(json!({
-            "file_path": p.file_path,
-            "language": p.language,
-            "note": "Full LSP analysis requires a running LSP server and init sequence. This provides the requested parameter structure."
-        }))
+        let pool = self.lsp_pool.lock().map_err(|e| e.to_string())?;
+        let handle = futures::executor::block_on(pool.get_server(&p.language))
+            .map_err(|e| e.to_string())?;
+        match handle.document_symbols(&p.file_path) {
+            Ok(symbols) => Ok(json!({
+                "file_path": p.file_path,
+                "language": p.language,
+                "symbol_count": symbols.len(),
+                "symbols": symbols.iter().map(|s| json!({
+                    "name": s.name,
+                    "detail": s.detail,
+                    "range": s.range,
+                })).collect::<Vec<_>>(),
+            })),
+            Err(e) => Err(format!("LSP error: {}", e)),
+        }
     }
 
     fn handle_lsp_get_type_info(&self, args: Value) -> Result<Value, String> {
         use tools::lsp_tools::LspTypeInfoParams;
         let p: LspTypeInfoParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        Ok(json!({
-            "file_path": p.file_path,
-            "language": p.language,
-            "position": {"line": p.line, "character": p.character},
-            "note": "Type info query dispatched. LSP must be initialized first."
-        }))
+        let pool = self.lsp_pool.lock().map_err(|e| e.to_string())?;
+        let handle = futures::executor::block_on(pool.get_server(&p.language))
+            .map_err(|e| e.to_string())?;
+        match handle.hover(&p.file_path, p.line, p.character) {
+            Ok(Some(info)) => Ok(json!({
+                "type_name": info.type_name,
+                "file_path": p.file_path,
+                "position": {"line": p.line, "character": p.character},
+            })),
+            Ok(None) => Ok(json!({
+                "file_path": p.file_path,
+                "note": "No type info available at this position",
+            })),
+            Err(e) => Err(format!("LSP error: {}", e)),
+        }
     }
 
     fn handle_lsp_find_references(&self, args: Value) -> Result<Value, String> {
         use tools::lsp_tools::LspFindReferencesParams;
         let p: LspFindReferencesParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        Ok(json!({
-            "file_path": p.file_path,
-            "language": p.language,
-            "position": {"line": p.line, "character": p.character},
-            "include_declaration": p.include_declaration,
-            "note": "Find references query dispatched. LSP must be initialized first."
-        }))
+        let pool = self.lsp_pool.lock().map_err(|e| e.to_string())?;
+        let handle = futures::executor::block_on(pool.get_server(&p.language))
+            .map_err(|e| e.to_string())?;
+        match handle.find_references(&p.file_path, p.line, p.character) {
+            Ok(refs) => Ok(json!({
+                "file_path": p.file_path,
+                "reference_count": refs.len(),
+                "references": refs.iter().map(|r| json!({
+                    "uri": r.uri,
+                    "range": {
+                        "start": {"line": r.range.start.line, "character": r.range.start.character},
+                        "end": {"line": r.range.end.line, "character": r.range.end.character},
+                    },
+                })).collect::<Vec<_>>(),
+            })),
+            Err(e) => Err(format!("LSP error: {}", e)),
+        }
     }
 
     fn handle_lsp_get_diagnostics(&self, args: Value) -> Result<Value, String> {
         use tools::lsp_tools::LspDiagnosticsParams;
         let p: LspDiagnosticsParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        Ok(json!({
-            "file_path": p.file_path,
-            "language": p.language,
-            "note": "Diagnostics query dispatched. LSP must be initialized first."
-        }))
+        let pool = self.lsp_pool.lock().map_err(|e| e.to_string())?;
+        let handle = futures::executor::block_on(pool.get_server(&p.language))
+            .map_err(|e| e.to_string())?;
+        match handle.diagnostics(&p.file_path) {
+            Ok(diags) => Ok(json!({
+                "file_path": p.file_path,
+                "language": p.language,
+                "diagnostic_count": diags.len(),
+                "diagnostics": diags.iter().map(|d| json!({
+                    "message": d.message,
+                    "range": d.range,
+                })).collect::<Vec<_>>(),
+            })),
+            Err(e) => Err(format!("LSP error: {}", e)),
+        }
     }
 
     fn handle_lsp_get_hierarchy(&self, args: Value) -> Result<Value, String> {
         use tools::lsp_tools::LspHierarchyParams;
         let p: LspHierarchyParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
-        Ok(json!({
-            "file_path": p.file_path,
-            "language": p.language,
-            "position": {"line": p.line, "character": p.character},
-            "direction": p.direction,
-            "note": "Type hierarchy query dispatched. LSP must be initialized first."
-        }))
+        let pool = self.lsp_pool.lock().map_err(|e| e.to_string())?;
+        let handle = futures::executor::block_on(pool.get_server(&p.language))
+            .map_err(|e| e.to_string())?;
+        match handle.type_hierarchy(&p.file_path, p.line, p.character) {
+            Ok(hierarchy) => Ok(json!({
+                "file_path": p.file_path,
+                "type_name": hierarchy.type_name,
+                "supertypes": hierarchy.supertypes,
+                "subtypes": hierarchy.subtypes,
+            })),
+            Err(e) => Err(format!("LSP error: {}", e)),
+        }
     }
 
     // ============ Consistency Tool Handlers (extended) ============
