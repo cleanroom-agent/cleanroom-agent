@@ -1,4 +1,56 @@
-//! Root definition.
+//! Root document type — the top-level [`SoftwareDefinition`].
+//!
+//! This is the entry point for any S.DEF document. It aggregates all
+//! other type modules as optional fields, allowing partial documents
+//! while ensuring the schema version and name are always present.
+//!
+//! # Document Structure
+//!
+//! ```text
+//! SoftwareDefinition
+//! ├── sdef_version          (required)
+//! ├── name                  (required)
+//! ├── description
+//! ├── version
+//! ├── metadata
+//! ├── system_boundary
+//! ├── design_decisions
+//! ├── version_history
+//! ├── domain
+//! ├── architecture
+//! ├── data_models
+//! ├── contracts
+//! ├── behavior
+//! ├── ui
+//! ├── tests
+//! ├── reconstruction_rules
+//! ├── dependencies
+//! ├── deployment
+//! └── resources
+//! ```
+//!
+//! # URI References
+//!
+//! Entities within the document are referenced using `sdef://` URIs:
+//!
+//! | Entity | URI Pattern |
+//! |--------|-------------|
+//! | Data Model | `sdef://{name}/data-models/{entity}` |
+//! | Interface | `sdef://{name}/contracts/interfaces/{name}` |
+//! | Function | `sdef://{name}/behavior/functions/{name}` |
+//!
+//! # Example
+//!
+//! ```rust
+//! use sdef_core::SoftwareDefinition;
+//!
+//! let sdef = SoftwareDefinition {
+//!     sdef_version: "2026-05-27".to_string(),
+//!     name: "com.example.myapp".to_string(),
+//!     description: Some("Example application".to_string()),
+//!     ..Default::default()
+//! };
+//! ```
 
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +58,33 @@ use super::{metadata, system_boundary, design_decisions, versioning, domain, arc
 
 /// The root object of any S.DEF document.
 /// Contains all layers of software description.
+///
+/// # Mandatory Fields
+///
+/// - `sdef_version` — Schema version (date-based, e.g. "2026-05-27")
+/// - `name` — Software identifier (e.g. "com.example.todoapp")
+///
+/// # All Optional Fields
+///
+/// | Field | Type | Description |
+/// |-------|------|-------------|
+/// | `description` | `String` | Human-readable description |
+/// | `version` | `String` | Software version being described |
+/// | `metadata` | `SoftwareMetadata` | Authors, license, repository |
+/// | `system_boundary` | `SystemBoundary` | Inclusions/exclusions |
+/// | `design_decisions` | `Vec<DesignDecision>` | Architectural decisions |
+/// | `version_history` | `Vec<VersionRecord>` | Version changelog |
+/// | `domain` | `Domain` | Domain model |
+/// | `architecture` | `Architecture` | Structural layers |
+/// | `data_models` | `Vec<DataModel>` | Entity definitions |
+/// | `contracts` | `Contracts` | Interfaces, classes, APIs |
+/// | `behavior` | `Behavior` | Functions, flows, state machines |
+/// | `ui` | `UserInterface` | Screens and components |
+/// | `tests` | `TestContract` | Test specifications |
+/// | `reconstruction_rules` | `ReconstructionRules` | Generation directives |
+/// | `dependencies` | `Vec<Dependency>` | External dependencies |
+/// | `deployment` | `Deployment` | Runtime requirements |
+/// | `resources` | `Vec<Resource>` | Provided/consumed resources |
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SoftwareDefinition {
     /// Schema version (date-based, e.g. "2026-05-27").

@@ -1,4 +1,36 @@
-//! Versioning and compatibility types.
+//! Versioning, deprecation, and migration types.
+//!
+//! These types manage software version history, backward compatibility,
+//! and data migration paths between versions.
+//!
+//! # Version Lifecycle
+//!
+//! | Field | Description |
+//! |-------|-------------|
+//! | `release_date` | When this version was released |
+//! | `deprecated` | Whether this version is deprecated |
+//! | `eol_date` | End-of-life date |
+//!
+//! # Breaking Changes
+//!
+//! `breaking_changes` lists incompatibilities introduced in a version,
+//! such as removed APIs, changed behavior, or modified data models.
+//!
+//! # Deprecation Info
+//!
+//! Deprecated elements include migration guidance:
+//! - `since_version` — When deprecation occurred
+//! - `replaced_by` — What to use instead
+//! - `removal_version` — When element will be removed
+//! - `migration_guide` — How to migrate
+//!
+//! # Compatibility Mapping
+//!
+//! Describes how legacy elements map to current versions:
+//! - `maps_to` — Target element
+//! - `field_mapping` — Legacy → current field name mapping
+//! - `transform_logic` — Pseudocode for transformation
+//! - `bidirectional` — Whether reverse mapping exists
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -1,8 +1,70 @@
-//! sdef-core — Rust types for S.DEF (Software Definition Exchange Format)
+//! sdef-core — Rust type definitions for S.DEF (Software Definition Exchange Format).
 //!
-//! Canonical source: S.DEF/schema/draft/schema.ts
+//! S.DEF is a structured format for describing software systems comprehensively.
+//! It captures everything from data models and contracts to behavior, architecture,
+//! UI design, and deployment requirements.
 //!
-//! All types are serde-serializable for JSON/YAML export.
+//! # Canonical Source
+//!
+//! The canonical TypeScript schema lives at: `S.DEF/schema/draft/schema.ts`
+//! This Rust crate is a direct port of that schema with Rust-specific optimizations.
+//!
+//! # S.DEF Document Structure
+//!
+//! A complete S.DEF document contains these major sections:
+//!
+//! | Section | Type | Description |
+//! |---------|------|-------------|
+//! | Metadata | [`SoftwareMetadata`] | Project info, authors, license |
+//! | System Boundary | [`SystemBoundary`] | What the software does/doesn't do |
+//! | Design Decisions | [`Vec<DesignDecision>`] | Architectural choices with rationale |
+//! | Domain | [`Domain`] | Domain model with entities and relationships |
+//! | Architecture | [`Architecture`] | Layers, modules, communication patterns |
+//! | Data Models | [`Vec<DataModel>`] | Entity definitions with attributes |
+//! | Contracts | [`Contracts`] | Interfaces, classes, enums, APIs |
+//! | Behavior | [`Behavior`] | Functions, flows, state machines |
+//! | UI | [`UserInterface`] | Screens, components, navigation |
+//! | Tests | [`TestContract`] | Test specifications |
+//! | Versioning | [`Vec<VersionRecord>`] | Version history and migrations |
+//! | Dependencies | [`Vec<Dependency>`] | External dependencies |
+//! | Deployment | [`Deployment`] | Runtime and deployment requirements |
+//!
+//! # Serialization
+//!
+//! All types implement [`serde::Serialize`] and [`serde::Deserialize`] for
+//! JSON/YAML export. The schema version is date-based (e.g., `"2026-05-27"`).
+//!
+//! # Example
+//!
+//! ```rust
+//! use sdef_core::{SoftwareDefinition, SoftwareMetadata, DataModel, DataAttribute};
+//!
+//! let mut sdef = SoftwareDefinition::default();
+//! sdef.sdef_version = "2026-05-27".to_string();
+//! sdef.name = "com.example.todoapp".to_string();
+//! sdef.metadata = Some(SoftwareMetadata {
+//!     authors: None,
+//!     license: Some("MIT".to_string()),
+//!     homepage: None,
+//!     repository: None,
+//!     category: Some("web_application".to_string()),
+//!     tags: None,
+//!     target_platforms: None,
+//!     compatibility_policy: None,
+//!     annotations: None,
+//! });
+//!
+//! // Serialize to JSON
+//! let json = serde_json::to_string_pretty(&sdef).unwrap();
+//! ```
+//!
+//! # Validation
+//!
+//! Use [`validator::validate()`] to check an S.DEF document for:
+//! - Required fields (`sdef_version`, `name`)
+//! - URI reference integrity (sdef:// URIs point to existing entities)
+//! - Naming conventions
+//! - Cross-reference validation (e.g., class implements existing interfaces)
 
 pub mod types;
 pub mod version;

@@ -1,4 +1,29 @@
-//! Domain layer types.
+//! Domain layer types — business concepts, rules, and processes.
+//!
+//! The domain layer captures the business problem being solved, independent
+//! of any technical implementation. It describes WHAT the software does
+//! in business terms.
+//!
+//! # Business Concepts
+//!
+//! The nouns of the domain — entities that matter to the business:
+//! - `id`, `name`, `description`
+//! - `attributes` with abstract types
+//! - `relationships` with cardinality
+//! - `invariants` that must always hold
+//!
+//! # Business Rules
+//!
+//! Conditions and actions that govern business behavior:
+//! - `condition` — When the rule applies
+//! - `action` — What happens when condition is met
+//! - `priority` — Importance level
+//!
+//! # Business Processes
+//!
+//! Multi-stage processes with exception handling:
+//! - `stages` — Sequential steps with entry/exit conditions
+//! - `exception_handling` — How exceptions are handled
 
 use serde::{Deserialize, Serialize};
 

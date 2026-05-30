@@ -1,4 +1,34 @@
-//! UI types — Pen format + S.DEF extensions.
+//! UI types — Pen format integration with S.DEF semantic extensions.
+//!
+//! The UI section captures user interface design in three layers:
+//!
+//! # Layer 1: Design System
+//!
+//! Design tokens and themes for consistent styling:
+//! - Colors, typography, spacing, shadows
+//! - Motion/animation durations and easings
+//! - Named themes (light, dark, brand)
+//!
+//! # Layer 2: Pen Visual Document
+//!
+//! Pen-compatible visual document with S.DEF semantic extensions:
+//! - Visual nodes: `Frame`, `Text`, `Rectangle`, `Ellipse`, `Path`, `Ref`, `IconFont`
+//! - S.DEF extensions: `sdef_bindings`, `sdef_behaviors`, `sdef_states`, `sdef_accessibility`
+//!
+//! # Layer 3: Abstract Screens
+//!
+//! Language-agnostic screen definitions:
+//! - Screen ID, name, route, purpose
+//! - Component hierarchy with behaviors and state
+//! - Navigation structure
+//! - Responsive breakpoints
+//!
+//! # Data Bindings
+//!
+//! `UIDataBinding` links UI elements to data model fields:
+//! - `entity` — Data model entity name
+//! - `field` — Attribute name
+//! - `direction` — "one_way" or "two_way" binding
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -1,4 +1,26 @@
-//! Test contract types.
+//! Test contract types — unit tests, integration tests, and acceptance criteria.
+//!
+//! Captures test specifications in a format that can be used to generate
+//! actual test code or validate generated code against expected behavior.
+//!
+//! # Unit Tests
+//!
+//! [`UnitTestCase`] follows the Given/When/Then pattern:
+//! - `given` — Preconditions and test setup
+//! - `when` — The action being tested
+//! - `then` — Expected outcomes
+//!
+//! # Integration Tests
+//!
+//! Span multiple components with:
+//! - `steps` — Sequence of actions
+//! - `expected_result` — What should happen
+//! - `assertions` — Specific checks to verify
+//!
+//! # Acceptance Criteria
+//!
+//! High-level requirements that define when the software is "done".
+//! Written in natural language for stakeholder alignment.
 
 use serde::{Deserialize, Serialize};
 

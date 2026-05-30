@@ -1,4 +1,19 @@
-//! System boundary types.
+//! System boundary types — what the software does and does NOT do.
+//!
+//! The system boundary clarifies scope by explicitly stating:
+//! - Core purpose in one sentence
+//! - Target users
+//! - Features in scope
+//! - Explicit non-goals (prevents over-implementation)
+//! - Success criteria
+//! - Constraints
+//! - External dependencies
+//!
+//! # Non-Goals
+//!
+//! The `non_goals` field is particularly important — it explicitly lists
+//! what the software is NOT trying to do, preventing feature creep and
+//! setting realistic expectations with stakeholders.
 
 use serde::{Deserialize, Serialize};
 

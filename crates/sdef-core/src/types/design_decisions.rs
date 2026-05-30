@@ -1,4 +1,24 @@
-//! Design decision types.
+//! Design decision types — architectural choices with rationale.
+//!
+//! Records significant design decisions made during software development,
+//! capturing the context, alternatives considered, and consequences.
+//!
+//! # Purpose
+//!
+//! Design decisions serve as documentation for WHY the software is structured
+//! a certain way. They help future maintainers understand constraints and
+//! reasoning without needing to dig through meeting notes or archived emails.
+//!
+//! # Architecture Decision Record (ADR) Pattern
+//!
+//! Each [`DesignDecision`] is an ADR capturing:
+//! - **Topic** — What area does this decision affect?
+//! - **Decision** — What was chosen?
+//! - **Rationale** — Why was this choice made?
+//! - **Context** — What constraints or requirements existed?
+//! - **Alternatives** — What other options were considered?
+//! - **Consequences** — What are the outcomes (positive and negative)?
+//! - **Constraints** — What constraints does this impose?
 
 use serde::{Deserialize, Serialize};
 

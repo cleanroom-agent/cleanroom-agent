@@ -1,4 +1,42 @@
-//! Reconstruction rules types.
+//! Reconstruction rules types — directives for code generation.
+//!
+//! Guides how the S.DEF document should be used to regenerate code.
+//!
+//! # Reconstruction Fidelity
+//!
+//! | Value | Meaning |
+//! |-------|---------|
+//! | `high` | Maximum detail, all optional fields populated |
+//! | `medium` | Balanced detail (default) |
+//! | `low` | Minimal representation |
+//!
+//! # Compatibility Modes
+//!
+//! | Mode | Description |
+//! |------|-------------|
+//! | `full` | Include all legacy elements |
+//! | `mixed` | Include compat layers, mark deprecated |
+//! | `clean` | Current version only |
+//! | `custom` | User-defined via `target_versions` |
+//!
+//! # Tech Constraints
+//!
+//! Specifies the target technology stack:
+//! - Language family (Rust, TypeScript, Python, Go, etc.)
+//! - Runtime requirements
+//! - Persistence model (SQL, NoSQL, etc.)
+//! - Concurrency model
+//! - Allowed licenses
+//! - Preferred frameworks
+//!
+//! # Directives
+//!
+//! [`ReconstructionDirective`] guides code generation with priority levels:
+//! - `must` — Must be followed
+//! - `should` — Strong recommendation
+//! - `may` — Optional guidance
+//!
+//! Locked directives cannot be modified by agents without explicit approval.
 
 use serde::{Deserialize, Serialize};
 

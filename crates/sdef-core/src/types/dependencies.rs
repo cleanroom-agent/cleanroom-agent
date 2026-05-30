@@ -1,4 +1,24 @@
 //! Dependency and resource types.
+//!
+//! Describes external software dependencies and resources the software
+//! provides or consumes.
+//!
+//! # Dependency Types
+//!
+//! | Type | Meaning |
+//! |------|---------|
+//! | `runtime` | Required at runtime (e.g., library) |
+//! | `build` | Required for building (e.g., compiler) |
+//! | `dev` | Required for development only |
+//! | `optional` | Optional feature |
+//!
+//! # Resources
+//!
+//! Resources represent integrations with external systems:
+//! - Databases
+//! - Message queues
+//! - File storage
+//! - External APIs
 
 use serde::{Deserialize, Serialize};
 

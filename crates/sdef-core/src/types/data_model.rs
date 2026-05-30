@@ -1,4 +1,29 @@
-//! Data model types.
+//! Data model types — entities, attributes, relationships, and physical design.
+//!
+//! The data model section describes the structural data aspects of the software:
+//! entities (like "User", "Order"), their attributes, relationships between them,
+//! and physical design hints for database implementation.
+//!
+//! # Data Model Lifecycle
+//!
+//! | Status | Meaning |
+//! |--------|---------|
+//! | `active` | Currently in use, fully supported |
+//! | `deprecated` | Still functional but marked for removal |
+//! | `legacy` | Old implementation, kept for backward compatibility |
+//!
+//! # Attribute Types
+//!
+//! Common logical types: `UUID`, `string`, `boolean`, `integer`, `decimal`,
+//! `timestamp`, `json`, `email`, `uri`, `url`
+//!
+//! # Relationships
+//!
+//! | Kind | Meaning |
+//! |------|---------|
+//! | `belongs_to` | Foreign key in this entity points to target |
+//! | `has_many` | Target has foreign key pointing to this entity |
+//! | `many_to_many` | Uses join table |
 
 use serde::{Deserialize, Serialize};
 

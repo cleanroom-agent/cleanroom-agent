@@ -1,4 +1,22 @@
-//! Deployment types.
+//! Deployment and runtime requirements types.
+//!
+//! Describes how the software should be deployed and what it requires at runtime.
+//!
+//! # Deployment Structure
+//!
+//! - `runtime` — Runtime environment requirements (language version, OS, etc.)
+//! - `build_output` — Where build artifacts are placed
+//! - `deployment_steps` — Manual steps for deployment
+//! - `configuration` — Configuration variables with defaults
+//! - `scaling` — Scaling strategy description
+//! - `monitoring` — Monitoring/observability approach
+//!
+//! # Configuration Variables
+//!
+//! Each [`ConfigurationVar`] captures:
+//! - `name` — Variable name
+//! - `description` — Purpose explanation
+//! - `default_value` — Default if not explicitly set
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
