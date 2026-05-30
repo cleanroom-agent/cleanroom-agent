@@ -169,6 +169,84 @@ impl CleanroomMcpServer {
         Ok(())
     }
 
+    /// Starts the MCP server over TCP transport (cross-platform).
+    ///
+    /// Listens on the given TCP address and spawns a new handler for each
+    /// incoming connection. Multiple concurrent clients (IDE + CLI) can
+    /// connect and share the same database.
+    ///
+    /// # Address format
+    ///
+    /// - `"tcp://127.0.0.1:0"` → bind loopback, OS-assigned port
+    /// - `"tcp://127.0.0.1:9000"` → bind loopback, specific port
+    /// - `"tcp://0.0.0.0:9000"` → bind all interfaces (⚠️ use only in trusted networks)
+    ///
+    /// The port is written to `<temp_dir>/cleanroom.port` for CLI discovery.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let server = CleanroomMcpServer::new(Path::new("state.db")).unwrap();
+    /// server.serve_tcp("tcp://127.0.0.1:0").await?;
+    /// ```
+    pub async fn serve_tcp(self, addr: &str) -> Result<(), ErrorData> {
+        // Spawn background consistency checker
+        let checker_db = self.db.clone();
+        let checker_config = cleanroom_agent::consistency_checker::ConsistencyCheckerConfig {
+            interval: std::time::Duration::from_secs(300),
+            document_names: vec![],
+            auto_fix: true,
+        };
+        let checker = cleanroom_agent::consistency_checker::ConsistencyChecker::new(
+            checker_db, checker_config,
+        );
+        checker.run_loop();
+
+        // Parse address, stripping "tcp://" prefix
+        let bind_addr = addr.strip_prefix("tcp://").unwrap_or(addr);
+
+        let listener = tokio::net::TcpListener::bind(bind_addr).await
+            .map_err(|e| ErrorData::internal_error(
+                format!("Failed to bind TCP at {}: {}", bind_addr, e), None
+            ))?;
+
+        let local_addr = listener.local_addr()
+            .map_err(|e| ErrorData::internal_error(
+                format!("Failed to get local address: {}", e), None
+            ))?;
+
+        // Write port file for CLI discovery
+        cleanroom_agent::orchestrator::write_port_file(local_addr.port());
+
+        println!("MCP server listening on tcp://{}", local_addr);
+        tracing::info!(addr = %local_addr, "MCP server listening on TCP");
+
+        loop {
+            let (stream, peer_addr) = listener.accept().await
+                .map_err(|e| ErrorData::internal_error(
+                    format!("TCP accept error: {}", e), None
+                ))?;
+
+            tracing::debug!(peer = %peer_addr, "TCP connection accepted");
+
+            let (reader, writer) = tokio::io::split(stream);
+            let db = self.db.clone();
+            let db_path = self.db_path.clone();
+            let lsp_pool = self.lsp_pool.clone();
+
+            tokio::spawn(async move {
+                let server = CleanroomMcpServer {
+                    db,
+                    db_path,
+                    lsp_pool,
+                };
+                if let Err(e) = serve_server(server, (reader, writer)).await {
+                    tracing::warn!(error = %e, "TCP connection handler exited with error");
+                }
+            });
+        }
+    }
+
     /// Helper: derive JSON schemas for tool parameters.
     ///
     /// Uses `schemars` to generate a JSON Schema from a type's struct definition.
@@ -437,6 +515,18 @@ impl CleanroomMcpServer {
             // Evaluation
             "run_evaluation" => self.handle_run_evaluation(args_value),
             "get_evaluation_report" => self.handle_get_evaluation_report(args_value),
+            // Task queue
+            "get_task_queue" => self.handle_get_task_queue(args_value),
+            "insert_task" => self.handle_insert_task(args_value),
+            "remove_task" => self.handle_remove_task(args_value),
+            "modify_task" => self.handle_modify_task(args_value),
+            // LLM↔Human bridge
+            "request_clarification" => self.handle_request_clarification(args_value),
+            "propose_decision" => self.handle_propose_decision(args_value),
+            "preview_changes" => self.handle_preview_changes(args_value),
+            // Workflow control (cross-platform, replaces OS signals)
+            "pause_workflow" => self.handle_pause_workflow(args_value),
+            "resume_workflow" => self.handle_resume_workflow(args_value),
             _ => Err(format!("Unknown tool: {}", name)),
         }
     }
@@ -1616,8 +1706,306 @@ impl CleanroomMcpServer {
             Ok(serde_json::to_value(&results).unwrap_or(json!([])))
         }
     }
+
+    // ─── Task Queue Tools ─────────────────────────────────────────────
+
+    /// List tasks in the queue with optional status/type filters.
+    fn handle_get_task_queue(&self, args: Value) -> Result<Value, String> {
+        use tools::task_queue_tools::GetTaskQueueParams;
+
+        let p: GetTaskQueueParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
+
+        let repo = self.task_repo();
+
+        let status_filter = p.filter_status.as_ref().and_then(|s| {
+            if s.is_empty() { None } else { Some(s.clone()) }
+        });
+
+        let type_filter = p.filter_type.clone();
+
+        // Use list() with appropriate filters
+        let tasks = repo
+            .list(None, None, None) // all statuses, no limit
+            .map_err(|e| e.to_string())?;
+
+        let filtered: Vec<serde_json::Value> = tasks
+            .into_iter()
+            .filter(|t| {
+                if let Some(ref statuses) = status_filter {
+                    if !statuses.contains(&t.status.as_str().to_string()) {
+                        return false;
+                    }
+                }
+                if let Some(ref task_type) = type_filter {
+                    if t.task_type.as_str() != *task_type {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map(|t| serde_json::json!({
+                "task_id": t.task_id,
+                "task_type": t.task_type.as_str(),
+                "status": t.status.as_str(),
+                "priority": t.priority,
+                "assigned_to": t.assigned_to,
+                "progress": t.progress,
+                "created_at": t.created_at,
+                "started_at": t.started_at,
+                "completed_at": t.completed_at,
+                "dependencies": serde_json::from_str::<Vec<String>>(&t.dependencies_json).unwrap_or_default(),
+                "retry_count": t.retry_count,
+                "max_retries": t.max_retries,
+                "error_message": t.error_message,
+            }))
+            .collect();
+
+        Ok(serde_json::to_value(&filtered).unwrap_or(json!([])))
+    }
+
+    /// Insert a new task into the queue (pending status only).
+    fn handle_insert_task(&self, args: Value) -> Result<Value, String> {
+        use tools::task_queue_tools::InsertTaskParams;
+        use cleanroom_db::{Task, TaskStatus, TaskType};
+
+        let p: InsertTaskParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
+
+        let task_type = TaskType::from_str(&p.task_type)
+            .ok_or_else(|| format!("Unknown task type: '{}'", p.task_type))?;
+
+        let priority = p.priority.unwrap_or(5);
+        let input_json = serde_json::to_string(&p.input).unwrap_or_else(|_| "{}".to_string());
+
+        // Build dependency list
+        let mut deps: Vec<String> = p.dependencies.unwrap_or_default();
+        if let Some(ref after_id) = p.after_task_id {
+            deps.push(after_id.clone());
+        }
+
+        let task = Task {
+            task_id: uuid::Uuid::new_v4().to_string(),
+            task_type,
+            status: TaskStatus::Pending,
+            priority,
+            input_json,
+            output_json: None,
+            error_message: None,
+            assigned_to: None,
+            progress: 0.0,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            started_at: None,
+            completed_at: None,
+            retry_count: 0,
+            max_retries: p.max_retries.unwrap_or(3),
+            last_heartbeat: None,
+            dependencies_json: serde_json::to_string(&deps).unwrap_or_else(|_| "[]".to_string()),
+            version: 1,
+        };
+
+        let task_id = task.task_id.clone();
+        let repo = self.task_repo();
+        repo.create(&task).map_err(|e| e.to_string())?;
+
+        tracing::info!(%task_id, task_type = %p.task_type, priority, "Task inserted into queue");
+
+        Ok(serde_json::to_value(&serde_json::json!({
+            "inserted": true,
+            "task_id": task_id,
+        })).unwrap_or(json!({})))
+    }
+
+    /// Remove a pending task from the queue with dependency cascade.
+    fn handle_remove_task(&self, args: Value) -> Result<Value, String> {
+        use tools::task_queue_tools::RemoveTaskParams;
+
+        let p: RemoveTaskParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
+
+        // Verify status before deletion
+        let repo = self.task_repo();
+        let task = repo.get(&p.task_id).map_err(|e| e.to_string())?;
+
+        match task.status {
+            TaskStatus::Completed | TaskStatus::FailedPermanently => {
+                return Err(format!(
+                    "Task {} is in '{}' status and cannot be removed (immutable state)",
+                    p.task_id, task.status.as_str()
+                ));
+            }
+            TaskStatus::InProgress => {
+                return Err(format!(
+                    "Task {} is in progress and cannot be removed — wait for it to finish or fail",
+                    p.task_id
+                ));
+            }
+            _ => {} // pending/assigned/failed/retrying — ok to delete
+        }
+
+        // Cascade: remove this task_id from other tasks' dependencies
+        let cascaded = repo.cascade_remove_dependency(&p.task_id)
+            .map_err(|e| e.to_string())?;
+
+        // Delete the task
+        repo.delete(&p.task_id).map_err(|e| e.to_string())?;
+
+        tracing::info!(task_id = %p.task_id, cascaded, "Task removed from queue");
+
+        Ok(serde_json::to_value(&serde_json::json!({
+            "removed": true,
+            "task_id": p.task_id,
+            "cascaded_dependency_updates": cascaded,
+        })).unwrap_or(json!({})))
+    }
+
+    /// Modify a pending task's properties (priority, input, dependencies, max_retries).
+    fn handle_modify_task(&self, args: Value) -> Result<Value, String> {
+        use tools::task_queue_tools::ModifyTaskParams;
+
+        let p: ModifyTaskParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
+
+        let deps_json = p.dependencies
+            .as_ref()
+            .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "[]".to_string()));
+
+        let input_str = p.input
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()));
+
+        let repo = self.task_repo();
+        repo.update_fields(
+            &p.task_id,
+            p.priority,
+            input_str.as_deref(),
+            deps_json.as_deref(),
+            p.max_retries,
+        ).map_err(|e| e.to_string())?;
+
+        tracing::info!(task_id = %p.task_id, "Task modified");
+
+        Ok(serde_json::to_value(&serde_json::json!({
+            "modified": true,
+            "task_id": p.task_id,
+        })).unwrap_or(json!({})))
+    }
+
+    // ─── LLM↔Human Bridge Tools ─────────────────────────────────────
+
+    /// Request clarification from the human user.
+    fn handle_request_clarification(&self, args: Value) -> Result<Value, String> {
+        use tools::bridge_tools::RequestClarificationParams;
+
+        let p: RequestClarificationParams = serde_json::from_value(args)
+            .map_err(|e| e.to_string())?;
+
+        let question_id = uuid::Uuid::new_v4().to_string();
+
+        tracing::info!(%question_id, question = %p.question, "Clarification requested from user");
+
+        // The actual user interaction happens outside MCP — this tool
+        // records the question and returns a pending status. The CLI or
+        // IDE handles presenting the question and collecting the answer.
+        Ok(serde_json::to_value(&serde_json::json!({
+            "question_id": question_id,
+            "status": "pending",
+            "question": p.question,
+            "options": p.options,
+            "context_uri": p.context_uri,
+        })).unwrap_or(json!({})))
+    }
+
+    /// Propose a design decision for human approval.
+    fn handle_propose_decision(&self, args: Value) -> Result<Value, String> {
+        use tools::bridge_tools::ProposeDecisionParams;
+
+        let p: ProposeDecisionParams = serde_json::from_value(args)
+            .map_err(|e| e.to_string())?;
+
+        let decision_id = uuid::Uuid::new_v4().to_string();
+
+        tracing::info!(%decision_id, topic = %p.topic, "Design decision proposed to user");
+
+        // TODO: persist decision in audit log (self.db)
+
+        Ok(serde_json::to_value(&serde_json::json!({
+            "decision_id": decision_id,
+            "status": "pending",
+            "topic": p.topic,
+            "proposal": p.proposal,
+            "rationale": p.rationale,
+            "alternatives": p.alternatives,
+            "affects": p.affects,
+        })).unwrap_or(json!({})))
+    }
+
+    /// Preview code changes before applying.
+    fn handle_preview_changes(&self, args: Value) -> Result<Value, String> {
+        use tools::bridge_tools::PreviewChangesParams;
+
+        let p: PreviewChangesParams = serde_json::from_value(args)
+            .map_err(|e| e.to_string())?;
+
+        // For now, return an empty preview — the actual diff generation
+        // requires access to both existing and generated code which comes
+        // from the consumer pipeline.
+        Ok(serde_json::to_value(&serde_json::json!({
+            "entity_uri": p.entity_uri,
+            "target_language": p.target_language,
+            "diff_preview": null,
+            "affected_files": [],
+            "status": "not_available",
+            "message": "Diff preview requires generated code. Use the consumer pipeline first.",
+        })).unwrap_or(json!({})))
+    }
+
+    // ─── Workflow Control Tools ─────────────────────────────────────
+
+    /// Pause the workflow — agents finish current tasks, then stop claiming.
+    fn handle_pause_workflow(&self, _args: Value) -> Result<Value, String> {
+        if let Some(signal) = cleanroom_agent::GLOBAL_SIGNAL.get() {
+            if signal.is_paused() {
+                return Ok(serde_json::to_value(&serde_json::json!({
+                    "paused": false,
+                    "message": "Workflow was already paused."
+                })).unwrap_or(json!({})));
+            }
+            signal.pause();
+            tracing::info!("Workflow paused via MCP");
+            Ok(serde_json::to_value(&serde_json::json!({
+                "paused": true,
+                "message": "Workflow paused. Agents will finish current tasks then stop."
+            })).unwrap_or(json!({})))
+        } else {
+            Ok(serde_json::to_value(&serde_json::json!({
+                "paused": false,
+                "message": "No workflow signal found. Is the orchestrator running?"
+            })).unwrap_or(json!({})))
+        }
+    }
+
+    /// Resume a paused workflow — agents continue claiming tasks.
+    fn handle_resume_workflow(&self, _args: Value) -> Result<Value, String> {
+        if let Some(signal) = cleanroom_agent::GLOBAL_SIGNAL.get() {
+            if !signal.is_paused() {
+                return Ok(serde_json::to_value(&serde_json::json!({
+                    "resumed": false,
+                    "message": "Workflow is not paused."
+                })).unwrap_or(json!({})));
+            }
+            signal.resume();
+            tracing::info!("Workflow resumed via MCP");
+            Ok(serde_json::to_value(&serde_json::json!({
+                "resumed": true,
+                "message": "Workflow resumed. Agents will continue claiming tasks."
+            })).unwrap_or(json!({})))
+        } else {
+            Ok(serde_json::to_value(&serde_json::json!({
+                "resumed": false,
+                "message": "No workflow signal found. Is the orchestrator running?"
+            })).unwrap_or(json!({})))
+        }
+    }
 }
 
+// The impl CleanroomMcpServer block is closed above.
 // ============ Tool Definitions (i18n) ============
 
 /// Creates an MCP [`Tool`] definition with i18n description.
@@ -1724,6 +2112,21 @@ fn all_tools() -> Vec<Tool> {
         // Evaluation
         make_tool::<tools::eval_tools::RunEvalParams>("run_evaluation", "mcp.run_evaluation", false),
         make_tool::<tools::eval_tools::GetEvalReportParams>("get_evaluation_report", "mcp.get_evaluation_report", true),
+
+        // Task Queue Management (docs/15 §9)
+        make_tool::<tools::task_queue_tools::GetTaskQueueParams>("get_task_queue", "mcp.get_task_queue", true),
+        make_tool::<tools::task_queue_tools::InsertTaskParams>("insert_task", "mcp.insert_task", false),
+        make_tool::<tools::task_queue_tools::RemoveTaskParams>("remove_task", "mcp.remove_task", false),
+        make_tool::<tools::task_queue_tools::ModifyTaskParams>("modify_task", "mcp.modify_task", false),
+
+        // LLM↔Human Bridge (docs/15 §4)
+        make_tool::<tools::bridge_tools::RequestClarificationParams>("request_clarification", "mcp.request_clarification", false),
+        make_tool::<tools::bridge_tools::ProposeDecisionParams>("propose_decision", "mcp.propose_decision", false),
+        make_tool::<tools::bridge_tools::PreviewChangesParams>("preview_changes", "mcp.preview_changes", true),
+
+        // Workflow Control — cross-platform pause/resume (docs/15 §10)
+        make_tool::<tools::bridge_tools::PauseResumeParams>("pause_workflow", "mcp.pause_workflow", false),
+        make_tool::<tools::bridge_tools::PauseResumeParams>("resume_workflow", "mcp.resume_workflow", false),
     ]
 }
 

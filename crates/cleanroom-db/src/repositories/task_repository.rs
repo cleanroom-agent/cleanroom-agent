@@ -463,6 +463,125 @@ impl TaskRepository {
         }
         Ok(())
     }
+
+    /// Update specific fields of a pending task (priority, input, dependencies, max_retries).
+    ///
+    /// Only tasks in `pending` status can be modified. Returns an error if the
+    /// task is in_progress, completed, or failed_permanently.
+    #[instrument(skip_all)]
+    pub fn update_fields(
+        &self,
+        task_id: &str,
+        priority: Option<i32>,
+        input_json: Option<&str>,
+        dependencies_json: Option<&str>,
+        max_retries: Option<i32>,
+    ) -> DbResult<()> {
+        let conn = self.conn.lock().unwrap();
+
+        // Verify task exists and is in pending state
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM tasks WHERE task_id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        if status != "pending" {
+            return Err(DbError::ConstraintViolation(format!(
+                "Task {} is in status '{}', only 'pending' tasks can be modified",
+                task_id, status
+            )));
+        }
+
+        // Build dynamic UPDATE
+        let mut sets = Vec::new();
+        let mut param_idx = 1;
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(p) = priority {
+            sets.push(format!("priority = ?{}", param_idx));
+            param_values.push(Box::new(p));
+            param_idx += 1;
+        }
+        if let Some(input) = input_json {
+            sets.push(format!("input_json = ?{}", param_idx));
+            param_values.push(Box::new(input.to_string()));
+            param_idx += 1;
+        }
+        if let Some(deps) = dependencies_json {
+            sets.push(format!("dependencies_json = ?{}", param_idx));
+            param_values.push(Box::new(deps.to_string()));
+            param_idx += 1;
+        }
+        if let Some(retries) = max_retries {
+            sets.push(format!("max_retries = ?{}", param_idx));
+            param_values.push(Box::new(retries));
+            param_idx += 1;
+        }
+        // bump version on any change
+        sets.push("version = version + 1".to_string());
+
+        if sets.is_empty() {
+            return Ok(()); // nothing to update
+        }
+
+        let query = format!(
+            "UPDATE tasks SET {} WHERE task_id = ?{}",
+            sets.join(", "),
+            param_idx
+        );
+        param_values.push(Box::new(task_id.to_string()));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        conn.execute(&query, rusqlite::params_from_iter(param_refs))
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        tracing::info!(%task_id, "Updated task fields");
+        Ok(())
+    }
+
+    /// Remove a dependency from all tasks that depend on the given task_id.
+    #[instrument(skip_all)]
+    pub fn cascade_remove_dependency(&self, removed_task_id: &str) -> DbResult<usize> {
+        let conn = self.conn.lock().unwrap();
+        let mut cascaded = 0;
+
+        // Find all tasks that list `removed_task_id` as a dependency
+        let mut stmt = conn
+            .prepare("SELECT task_id, dependencies_json FROM tasks WHERE dependencies_json LIKE ?1")
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        let pattern = format!("%{}%", removed_task_id);
+        let rows: Vec<(String, String)> = stmt
+            .query_map(params![pattern], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        drop(stmt);
+
+        for (tid, deps_str) in &rows {
+            if let Ok(mut deps) = serde_json::from_str::<Vec<String>>(deps_str) {
+                let new_deps: Vec<String> =
+                    deps.into_iter().filter(|d| d != removed_task_id).collect();
+                let new_json = serde_json::to_string(&new_deps).unwrap_or_default();
+                conn.execute(
+                    "UPDATE tasks SET dependencies_json = ?1 WHERE task_id = ?2",
+                    params![new_json, tid],
+                )
+                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+                cascaded += 1;
+            }
+        }
+
+        Ok(cascaded)
+    }
 }
 
 #[cfg(test)]

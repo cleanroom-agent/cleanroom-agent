@@ -510,6 +510,7 @@ dependencies = [
  "indicatif",
  "rusqlite",
  "sdef-core",
+ "serde",
  "serde_json",
  "serde_yaml",
  "tokio",

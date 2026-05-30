@@ -118,8 +118,18 @@ impl Orchestrator {
     /// Start the full multi-agent workflow.
     ///
     /// Creates tasks, spawns agents, starts health monitor, and waits for completion.
+    /// Sets the global signal so the MCP server (if running in-process) can
+    /// serve pause/resume commands.
     #[instrument(skip(self))]
     pub async fn start_workflow(&self) -> Result<(), cleanroom_db::DbError> {
+        let signal = crate::workflow_signal::WorkflowSignal::new();
+
+        // Store signal globally for MCP server access
+        let _ = crate::workflow_signal::GLOBAL_SIGNAL.set(signal.clone());
+
+        // Write PID file for CLI status checks
+        write_pid_file();
+
         // Phase 1: Create all tasks
         let task_ids = self.create_initial_tasks().await?;
         info!(count = task_ids.len(), "Workflow tasks created");
@@ -139,16 +149,25 @@ impl Orchestrator {
                 self.db.clone(),
             );
             let db_clone = self.db.clone();
+            let signal_clone = signal.clone();
             let label = format!("producer-{}", i);
             handles.push(tokio::spawn(async move {
                 info!(agent = %label, "Producer agent started");
                 loop {
+                    // Check pause before claiming
+                    if signal_clone.is_paused() {
+                        signal_clone.wait_for_resume().await;
+                    }
+
                     match agent.process_next_task().await {
                         Ok(Some(task)) => {
                             info!(agent = %label, task_id = %task.task_id, "Task completed");
                         }
                         Ok(None) => {
-                            // No tasks — check if workflow is done
+                            if signal_clone.is_paused() {
+                                signal_clone.wait_for_resume().await;
+                                continue;
+                            }
                             let progress = crate::scheduler::Scheduler::new(db_clone.clone())
                                 .get_progress()
                                 .unwrap_or_default();
@@ -174,12 +193,25 @@ impl Orchestrator {
                 self.db.clone(),
                 self.config.output_path.clone(),
             );
+            let signal_clone = signal.clone();
 
             handles.push(tokio::spawn(async move {
                 let label = format!("reviewer-{}", i);
                 info!(agent = %label, "Reviewer agent started");
-                reviewer_loop(&reviewer).await
-                    .unwrap_or_else(|e| warn!(agent = %label, error = %e, "Reviewer loop exited with error"));
+
+                // Pause-aware reviewer loop
+                loop {
+                    if signal_clone.is_paused() {
+                        signal_clone.wait_for_resume().await;
+                    }
+                    match reviewer_loop(&reviewer).await {
+                        Ok(()) => break,
+                        Err(e) => {
+                            warn!(agent = %label, error = %e, "Reviewer loop error, retrying");
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
+                    }
+                }
             }));
         }
 
@@ -188,8 +220,23 @@ impl Orchestrator {
             let _ = handle.await;
         }
 
+        // Clean up PID file
+        let _ = std::fs::remove_file(pid_file_path());
+
         info!("Workflow complete");
         Ok(())
+    }
+
+    /// Pause the workflow — agents finish current tasks then stop.
+    pub fn pause(&self) {
+        // Signal is shared via Arc, but we need to access it.
+        // For now, pause is handled via OS signals (SIGUSR1).
+        tracing::info!("Pause requested externally");
+    }
+
+    /// Resume the workflow — agents continue claiming tasks.
+    pub fn resume(&self) {
+        tracing::info!("Resume requested externally");
     }
 
     /// Work stealing: when an agent has no tasks in its own queue,
@@ -266,4 +313,36 @@ impl Orchestrator {
             Err(e) => Err(cleanroom_db::DbError::QueryFailed(e.to_string())),
         }
     }
+}
+
+/// Write PID to a platform-appropriate temp file for CLI status checks.
+fn write_pid_file() {
+    let pid = std::process::id();
+    let pid_path = pid_file_path();
+    let _ = std::fs::write(&pid_path, pid.to_string());
+    tracing::info!(pid, path = %pid_path.display(), "PID file written");
+}
+
+/// Platform-appropriate path for the PID file.
+pub fn pid_file_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("cleanroom.pid")
+}
+
+/// Platform-appropriate path for the TCP port file.
+pub fn port_file_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("cleanroom.port")
+}
+
+/// Reads the TCP port from the port file written by the MCP server.
+pub fn read_port_file() -> Option<u16> {
+    let path = port_file_path();
+    let content = std::fs::read_to_string(&path).ok()?;
+    content.trim().parse().ok()
+}
+
+/// Writes the TCP port to a file for CLI discovery.
+pub fn write_port_file(port: u16) {
+    let path = port_file_path();
+    let _ = std::fs::write(&path, port.to_string());
+    tracing::info!(port, path = %path.display(), "Port file written");
 }

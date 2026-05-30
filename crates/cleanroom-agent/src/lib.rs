@@ -81,6 +81,20 @@ pub mod design_decisions;
 pub mod tree_sitter_parser;
 pub mod lsp_analysis;
 
+// Runtime control: pause/resume (docs/15 §10)
+pub mod workflow_signal;
+
+// Interactive CLI modes (docs/15 §2-3)
+pub mod interaction;
+
+// Progress visualization (docs/15 §7)
+pub mod progress_visualizer;
+
+// Resilience: retry, recovery, degradation (docs/16)
+pub mod retry;
+pub mod recovery;
+pub mod degradation;
+
 // Multi-agent collaboration (docs/13)
 pub mod collaboration;
 pub mod reviewer;
@@ -91,7 +105,7 @@ pub mod evaluation;
 pub use agent::{CleanroomAgent, AgentConfig, RunMode};
 pub use naming::{DeterministicNames, Language, NameStyle, NamespaceMode};
 pub use name_resolution::{NameResolutionService, ResolvedName};
-pub use orchestrator::{Orchestrator, OrchestratorConfig};
+pub use orchestrator::{Orchestrator, OrchestratorConfig, pid_file_path, port_file_path, read_port_file, write_port_file};
 pub use producer::{ProducerAgent, ProducerConfig};
 pub use consumer::{ConsumerAgent, ConsumerConfig, CompatibilityMode, Fidelity};
 pub use repo_scanner::{scan_repository, group_by_language, ScanConfig, SourceFile};
@@ -130,3 +144,9 @@ pub use evaluation::{
     GenerationQualityReport, RoundtripFidelity, CodeQualityMetrics,
     OperationalMetrics,
 };
+pub use workflow_signal::{WorkflowSignal, GLOBAL_SIGNAL};
+pub use interaction::{InteractionMode, InteractiveContext, ReviewItem, UserDecision, present_for_review, prompt_user};
+pub use progress_visualizer::ProgressVisualizer;
+pub use retry::{RetryConfig, retry_with_backoff, retry_sync_with_backoff};
+pub use recovery::{RecoveryReport, recover_on_startup};
+pub use degradation::{DegradationMode, Operation};

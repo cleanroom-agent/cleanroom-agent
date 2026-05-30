@@ -261,3 +261,106 @@ fn prune_backups(backup_dir: &Path, max_keep: usize) {
         }
     }
 }
+
+/// Verify SQLite database integrity using `PRAGMA integrity_check`.
+///
+/// Runs a full database consistency check. Returns `Ok(())` if the
+/// database is healthy, or an error describing the corruption.
+///
+/// Call this on startup to detect corruption before beginning work.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let db = Database::open(path)?;
+/// Database::verify_integrity(db.connection())?;
+/// ```
+pub fn verify_database_integrity(conn: &rusqlite::Connection) -> Result<(), crate::DbError> {
+    let result: String = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(|e| crate::DbError::QueryFailed(e.to_string()))?;
+
+    if result != "ok" {
+        return Err(crate::DbError::QueryFailed(format!(
+            "Database integrity check failed: {}",
+            result
+        )));
+    }
+
+    tracing::info!("Database integrity check passed");
+    Ok(())
+}
+
+/// Recover database from the most recent backup if corruption is detected.
+///
+/// Searches `<db_file_dir>/backups/` for backup files (`.db` extension),
+/// copies the most recent one to `db_path`, and reopens the connection.
+///
+/// Returns an error if no backup exists.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let db = Database::open("state.db")?;
+/// if let Err(_) = Database::verify_integrity(db.connection()) {
+///     recover_from_backup(Path::new("state.db"))?;
+///     db.reopen()?;
+/// }
+/// ```
+pub fn recover_from_backup(db_path: &std::path::Path) -> Result<(), crate::DbError> {
+    let backup_dir = db_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("backups");
+
+    if !backup_dir.exists() {
+        return Err(crate::DbError::NotFound {
+            resource: "backup directory",
+            field: "path",
+            value: backup_dir.display().to_string(),
+        });
+    }
+
+    // Find the most recent backup
+    let mut backups: Vec<_> = std::fs::read_dir(&backup_dir)
+        .map_err(|e| crate::DbError::QueryFailed(format!("read_dir failed: {}", e)))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "db"))
+        .filter_map(|e| {
+            let path = e.path();
+            let modified = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .ok()?;
+            Some((path, modified))
+        })
+        .collect();
+
+    backups.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
+
+    if let Some((latest_path, _)) = backups.first() {
+        tracing::info!(
+            path = %latest_path.display(),
+            "Restoring database from backup"
+        );
+        std::fs::copy(latest_path, db_path)
+            .map_err(|e| crate::DbError::QueryFailed(format!(
+                "Failed to restore backup '{}' to '{}': {}",
+                latest_path.display(),
+                db_path.display(),
+                e
+            )))?;
+
+        // Re-verify after restore
+        let temp_conn = rusqlite::Connection::open(db_path)
+            .map_err(|e| crate::DbError::ConnectionFailed(format!("{}", e)))?;
+        verify_database_integrity(&temp_conn)?;
+
+        Ok(())
+    } else {
+        Err(crate::DbError::NotFound {
+            resource: "backup",
+            field: "path",
+            value: backup_dir.display().to_string(),
+        })
+    }
+}

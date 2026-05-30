@@ -151,12 +151,17 @@ pub enum Commands {
     ///
     /// # Transport Types
     ///
-    /// - `stdio` — Standard input/output (default, for local integration)
+    /// - `stdio` — Standard input/output (default, for local IDE integration)
+    /// - `tcp://127.0.0.1:0` — TCP transport with OS-assigned port (cross-platform,
+    ///   enables CLI task queue management). Port is written to `<tmp>/cleanroom.port`.
+    /// - `tcp://127.0.0.1:12345` — TCP transport on a specific port
     ///
     /// # Example
     ///
     /// ```bash
     /// cleanroom serve --transport stdio
+    /// cleanroom serve --transport tcp://127.0.0.1:0
+    /// cleanroom serve --transport tcp://127.0.0.1:9000
     /// ```
     Serve {
         #[arg(long, default_value = "stdio")]
@@ -203,10 +208,14 @@ pub enum Commands {
     /// cleanroom inspect --check-type consistency
     /// cleanroom inspect --check-type coverage
     /// cleanroom inspect --check-type progress
+    /// cleanroom inspect --queue
     /// ```
     Inspect {
         #[arg(long, default_value = "consistency")]
         check_type: String,
+        /// Show full task queue (requires running MCP server)
+        #[arg(long)]
+        queue: bool,
     },
 
     /// Export S.DEF document to JSON or YAML file.
@@ -348,6 +357,105 @@ pub enum Commands {
         #[arg(long)]
         output: Option<String>,
     },
+
+    /// Manage the task queue of a running agent.
+    ///
+    /// Insert, remove, or modify pending tasks in a running `cleanroom serve`
+    /// process. Requires the MCP server to be running with TCP transport.
+    ///
+    /// # Example
+    ///
+    /// ```bash
+    /// # Show task queue
+    /// cleanroom task list
+    ///
+    /// # Insert a new task
+    /// cleanroom task insert --type EXTRACT_DATA_MODEL --input '{"module":"payment"}' --priority 6
+    ///
+    /// # Remove a pending task
+    /// cleanroom task remove t-006
+    ///
+    /// # Modify a pending task
+    /// cleanroom task modify t-005 --priority 9
+    ///
+    /// # Reprioritize tasks
+    /// cleanroom task reprioritize t-008 10 t-007 8
+    /// ```
+    #[command(subcommand)]
+    Task(TaskCommand),
+
+    /// Control the workflow lifecycle of a running agent.
+    ///
+    /// Pause, resume, or check the status of a running workflow.
+    #[command(subcommand)]
+    Workflow(WorkflowCommand),
+}
+
+/// Task queue subcommands.
+#[derive(clap::Subcommand)]
+enum TaskCommand {
+    /// List all tasks in the queue.
+    List {
+        /// Filter by status
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter by task type
+        #[arg(long)]
+        task_type: Option<String>,
+    },
+    /// Insert a new task into the queue.
+    Insert {
+        /// Task type (e.g. EXTRACT_DATA_MODEL)
+        #[arg(long)]
+        r#type: String,
+        /// JSON input for the task
+        #[arg(long)]
+        input: String,
+        /// Priority (higher = earlier)
+        #[arg(long, default_value = "5")]
+        priority: i32,
+        /// Task ID to depend on
+        #[arg(long)]
+        after: Option<String>,
+        /// Max retry count
+        #[arg(long, default_value = "3")]
+        max_retries: i32,
+    },
+    /// Remove a pending task.
+    Remove {
+        /// Task ID to remove
+        task_id: String,
+    },
+    /// Modify a pending task's properties.
+    Modify {
+        /// Task ID to modify
+        task_id: String,
+        /// New priority
+        #[arg(long)]
+        priority: Option<i32>,
+        /// New input JSON
+        #[arg(long)]
+        input: Option<String>,
+        /// New max retries
+        #[arg(long)]
+        max_retries: Option<i32>,
+    },
+    /// Reprioritize multiple tasks.
+    Reprioritize {
+        /// Pairs of task_id + new_priority (e.g. "t-001 10 t-002 8")
+        pairs: Vec<String>,
+    },
+}
+
+/// Workflow lifecycle subcommands.
+#[derive(clap::Subcommand)]
+enum WorkflowCommand {
+    /// Pause the running workflow (wait for current tasks to finish).
+    Pause,
+    /// Resume a paused workflow.
+    Resume,
+    /// Show workflow status.
+    Status,
 }
 
 /// Dispatches a CLI command to its corresponding handler.
@@ -377,8 +485,12 @@ pub fn run(command: Commands, db_path: &str) -> Result<()> {
         Commands::Resume { document, retry_failed } => {
             resume_command(&document, retry_failed, db_path)
         }
-        Commands::Inspect { check_type } => {
-            inspect_command(&check_type, db_path)
+        Commands::Inspect { check_type, queue } => {
+            if queue {
+                inspect_queue_command(db_path)
+            } else {
+                inspect_command(&check_type, db_path)
+            }
         }
         Commands::Export { document, output, format } => {
             export_command(&document, &output, &format, db_path)
@@ -395,7 +507,200 @@ pub fn run(command: Commands, db_path: &str) -> Result<()> {
         Commands::Evaluate { benchmark, output } => {
             evaluate_command(benchmark.as_deref(), output.as_deref(), db_path)
         }
+        Commands::Task(task) => {
+            task_dispatch(task, db_path)
+        }
+        Commands::Workflow(workflow) => {
+            workflow_dispatch(workflow, db_path)
+        }
     }
+}
+
+/// Dispatch task subcommands via MCP client over TCP.
+fn task_dispatch(cmd: TaskCommand, _db_path: &str) -> Result<()> {
+    use crate::mcp_client::call_mcp_tool_sync;
+
+    let addr = std::env::var("CLEANROOM_ADDR")
+        .ok()
+        .or_else(|| crate::mcp_client::discover_address().ok());
+
+    let addr = addr.as_deref();
+
+    match cmd {
+        TaskCommand::List { status, task_type } => {
+            let mut args = serde_json::json!({});
+            if let Some(s) = status {
+                args["filter_status"] = serde_json::json!([s]);
+            }
+            if let Some(t) = task_type {
+                args["filter_type"] = serde_json::Value::String(t);
+            }
+            let result = call_mcp_tool_sync("get_task_queue", args, addr)?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result)));
+        }
+        TaskCommand::Insert { r#type, input, priority, after, max_retries } => {
+            let input_val: serde_json::Value = serde_json::from_str(&input)
+                .map_err(|e| anyhow::anyhow!("Invalid JSON input: {}", e))?;
+            let mut args = serde_json::json!({
+                "task_type": r#type,
+                "priority": priority,
+                "input": input_val,
+                "max_retries": max_retries,
+            });
+            if let Some(ref aid) = after {
+                args["after_task_id"] = serde_json::Value::String(aid.clone());
+            }
+            let result = call_mcp_tool_sync("insert_task", args, addr)?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result)));
+        }
+        TaskCommand::Remove { task_id } => {
+            let args = serde_json::json!({"task_id": task_id});
+            let result = call_mcp_tool_sync("remove_task", args, addr)?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result)));
+        }
+        TaskCommand::Modify { task_id, priority, input, max_retries } => {
+            let mut args = serde_json::json!({"task_id": task_id});
+            if let Some(p) = priority { args["priority"] = p.into(); }
+            if let Some(ref i) = input {
+                let val: serde_json::Value = serde_json::from_str(i)
+                    .map_err(|e| anyhow::anyhow!("Invalid JSON input: {}", e))?;
+                args["input"] = val;
+            }
+            if let Some(r) = max_retries { args["max_retries"] = r.into(); }
+            let result = call_mcp_tool_sync("modify_task", args, addr)?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result)));
+        }
+        TaskCommand::Reprioritize { pairs } => {
+            if pairs.len() % 2 != 0 {
+                anyhow::bail!("Reprioritize requires pairs of task_id + priority (got {} args)", pairs.len());
+            }
+            for chunk in pairs.chunks(2) {
+                let task_id = &chunk[0];
+                let priority: i32 = chunk[1].parse()
+                    .map_err(|e| anyhow::anyhow!("Invalid priority '{}': {}", chunk[1], e))?;
+                let args = serde_json::json!({"task_id": task_id, "priority": priority});
+                let result = call_mcp_tool_sync("modify_task", args, addr)?;
+                println!("{}: {}", task_id, serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result)));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Dispatch workflow subcommands — pause/resume via MCP, status via PID + port file.
+fn workflow_dispatch(cmd: WorkflowCommand, _db_path: &str) -> Result<()> {
+    use crate::mcp_client::call_mcp_tool_sync;
+
+    let addr = std::env::var("CLEANROOM_ADDR")
+        .ok()
+        .or_else(|| crate::mcp_client::discover_address().ok());
+
+    match cmd {
+        WorkflowCommand::Pause => {
+            let addr = addr.ok_or_else(|| anyhow::anyhow!(
+                "Cannot connect to server. Is `cleanroom serve --transport tcp://` running?"
+            ))?;
+            let result = call_mcp_tool_sync("pause_workflow", serde_json::json!({}), Some(&addr))?;
+            let paused = result.get("paused").and_then(|v| v.as_bool()).unwrap_or(false);
+            if paused {
+                println!("Workflow pause requested — agents will finish current tasks then stop.");
+            } else {
+                println!("Workflow was already paused.");
+            }
+        }
+        WorkflowCommand::Resume => {
+            let addr = addr.ok_or_else(|| anyhow::anyhow!(
+                "Cannot connect to server. Is `cleanroom serve --transport tcp://` running?"
+            ))?;
+            let result = call_mcp_tool_sync("resume_workflow", serde_json::json!({}), Some(&addr))?;
+            let resumed = result.get("resumed").and_then(|v| v.as_bool()).unwrap_or(false);
+            if resumed {
+                println!("Workflow resumed — agents will continue claiming tasks.");
+            } else {
+                println!("Workflow was not paused.");
+            }
+        }
+        WorkflowCommand::Status => {
+            let pid_path = cleanroom_agent::pid_file_path();
+            let port_path = cleanroom_agent::port_file_path();
+
+            let pid_str = std::fs::read_to_string(&pid_path).ok();
+            let port_str = std::fs::read_to_string(&port_path).ok();
+
+            let running = if let Some(ref addr) = addr {
+                // Best liveness check: can we connect via TCP?
+                call_mcp_tool_sync("get_task_queue", serde_json::json!({}), Some(addr)).is_ok()
+            } else {
+                false
+            };
+
+            if running {
+                let pid = pid_str.as_deref().unwrap_or("?");
+                let port = port_str.as_deref().unwrap_or("?");
+                println!("cleanroom agent is running (PID: {}, port: {})", pid.trim(), port.trim());
+                if let Some(ref addr) = addr {
+                    match call_mcp_tool_sync("get_task_queue", serde_json::json!({}), Some(addr)) {
+                        Ok(val) => {
+                            let tasks = val.as_array().map(|a| a.len()).unwrap_or(0);
+                            println!("{} tasks in queue.", tasks);
+                            println!("Use `cleanroom inspect --queue` for details.");
+                        }
+                        Err(_) => {}
+                    }
+                }
+            } else if pid_str.is_some() {
+                println!("cleanroom agent is NOT running (stale PID file at {})", pid_path.display());
+            } else {
+                println!("cleanroom agent is NOT running (no PID file at {})", pid_path.display());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `inspect --queue` via MCP client.
+fn inspect_queue_command(_db_path: &str) -> Result<()> {
+    use crate::mcp_client::call_mcp_tool_sync;
+
+    let addr = std::env::var("CLEANROOM_ADDR")
+        .ok()
+        .or_else(|| crate::mcp_client::discover_address().ok());
+
+    let addr = addr.as_deref();
+
+    let result = call_mcp_tool_sync("get_task_queue", serde_json::json!({}), addr)?;
+    let tasks = result.as_array()
+        .ok_or_else(|| anyhow::anyhow!("Expected array response, got: {}", result))?;
+
+    if tasks.is_empty() {
+        println!("No tasks in queue.");
+        return Ok(());
+    }
+
+    println!("═══ Task Queue ═══");
+    println!("{:<14} {:<20} {:>8} {:<16} {}",
+        "ID", "Type", "Priority", "Status", "Assigned To");
+    println!("{:-<14} {:-<20} {:-<8} {:-<16} {:-<12}", "", "", "", "", "");
+
+    for t in tasks {
+        let id = t["task_id"].as_str().unwrap_or("?");
+        let ty = t["task_type"].as_str().unwrap_or("?");
+        let pri = t["priority"].as_i64().unwrap_or(0);
+        let status = t["status"].as_str().unwrap_or("?");
+        let assigned = t["assigned_to"].as_str().unwrap_or("-");
+        let status_icon = match status {
+            "completed" => "✅",
+            "in_progress" => "🔄",
+            "pending" => "⏳",
+            "failed" | "failed_permanently" => "❌",
+            _ => "?",
+        };
+        println!("{:<14} {:<20} {:>8} {} {:<14} {}",
+            id, ty, pri, status_icon, status, assigned);
+    }
+    println!();
+    println!("Use `cleanroom task <subcommand>` to manage the queue.");
+    Ok(())
 }
 
 fn set_api_key(key: Option<String>) {
@@ -506,7 +811,14 @@ fn serve_command(transport: &str, db_path: &str) -> Result<()> {
         let server = cleanroom_mcp::CleanroomMcpServer::new(Path::new(db_path))
             .context(tr_global!("cli.error_mcp_server"))?;
         println!("{}", tr_global!("cli.serve_starting", transport));
-        server.serve().await?;
+
+        if transport.starts_with("tcp://") {
+            // TCP transport — cross-platform, enables CLI task queue access
+            server.serve_tcp(transport).await?;
+        } else {
+            // Default: stdio transport for IDE/LLM integration
+            server.serve().await?;
+        }
         Ok(())
     })
 }

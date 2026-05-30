@@ -42,6 +42,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod commands;
+mod mcp_client;
 mod progress;
 
 /// Cleanroom Agent CLI arguments.

@@ -26,3 +26,5 @@ pub mod lsp_tools;
 pub mod consistency_tools;
 pub mod compat_tools;
 pub mod eval_tools;
+pub mod task_queue_tools;
+pub mod bridge_tools;
