@@ -198,18 +198,42 @@ impl TaskPlan {
                         max_retries: 3,
                     },
                 ],
+                // Reviewer phase (parallel with validation)
+                vec![
+                    TaskTemplate {
+                        task_type: TaskType::ValidateDataModel,
+                        priority: 7,
+                        input: serde_json::json!({"document": document_name}),
+                        dependency_indices: vec![1],
+                        max_retries: 3,
+                    },
+                    TaskTemplate {
+                        task_type: TaskType::ValidateCrossFile,
+                        priority: 7,
+                        input: serde_json::json!({"document": document_name}),
+                        dependency_indices: vec![1],
+                        max_retries: 3,
+                    },
+                    TaskTemplate {
+                        task_type: TaskType::RoundtripVerify,
+                        priority: 6,
+                        input: serde_json::json!({"document": document_name}),
+                        dependency_indices: vec![1, 2, 3],
+                        max_retries: 2,
+                    },
+                ],
                 vec![TaskTemplate {
                     task_type: TaskType::MergeCode,
-                    priority: 6,
+                    priority: 5,
                     input: serde_json::json!({"document": document_name}),
-                    dependency_indices: vec![1],
+                    dependency_indices: vec![1, 2],
                     max_retries: 3,
                 }],
                 vec![TaskTemplate {
                     task_type: TaskType::RunTests,
                     priority: 4,
                     input: serde_json::json!({"document": document_name}),
-                    dependency_indices: vec![2],
+                    dependency_indices: vec![5],
                     max_retries: 5,
                 }],
             ],
@@ -451,7 +475,8 @@ mod tests {
         let (_, scheduler) = setup();
         let plan = TaskPlan::generation_plan("test-doc");
         let ids = scheduler.create_from_plan(&plan).unwrap();
-        assert_eq!(ids.len(), 4, "Should create 4 tasks");
+        // ImportSdef(1) + GenerateCode(1) + ValidateDataModel(1) + ValidateCrossFile(1) + RoundtripVerify(1) + MergeCode(1) + RunTests(1)
+        assert_eq!(ids.len(), 7, "Should create 7 tasks (including reviewer)");
     }
 
     #[test]

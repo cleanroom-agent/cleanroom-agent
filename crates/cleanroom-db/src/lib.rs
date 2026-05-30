@@ -16,3 +16,5 @@ pub use repositories::{Shard, ShardRepository, ShardStatus};
 pub use repositories::{SymbolEntry, SymbolRepository, SymbolType};
 pub use repositories::{Fingerprint, FingerprintRepository};
 pub use repositories::SdefRepository;
+pub use repositories::{AgentMessage, AgentMessageRepository, MessageType};
+pub use repositories::{TypeCacheEntry, TypeCacheRepository};

@@ -7,6 +7,8 @@ pub mod symbol_repository;
 pub mod fingerprint_repository;
 pub mod checkpoint_repository;
 pub mod audit_repository;
+pub mod message_repository;
+pub mod type_cache_repository;
 
 pub use task_repository::{Task, TaskRepository, TaskStatus, TaskType};
 pub use shard_repository::{Shard, ShardRepository, ShardStatus};
@@ -18,3 +20,5 @@ pub use symbol_repository::{ResolutionResult, SymbolEntry, SymbolRepository, Sym
 pub use fingerprint_repository::{Fingerprint, FingerprintRepository};
 pub use checkpoint_repository::{Checkpoint, CheckpointRepository};
 pub use audit_repository::{AuditEntry, AuditRepository};
+pub use message_repository::{AgentMessage, AgentMessageRepository, MessageType};
+pub use type_cache_repository::{TypeCacheEntry, TypeCacheRepository};

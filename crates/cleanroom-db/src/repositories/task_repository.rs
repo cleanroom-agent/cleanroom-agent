@@ -65,6 +65,10 @@ pub enum TaskType {
     MergeCode,
     ImportSdef,
     ExportSdef,
+    // Reviewer task types (docs/13 §2.2)
+    ValidateDataModel,
+    ValidateCrossFile,
+    RoundtripVerify,
 }
 
 impl TaskType {
@@ -84,6 +88,9 @@ impl TaskType {
             Self::MergeCode => "MERGE_CODE",
             Self::ImportSdef => "IMPORT_SDEF",
             Self::ExportSdef => "EXPORT_SDEF",
+            Self::ValidateDataModel => "VALIDATE_DATA_MODEL",
+            Self::ValidateCrossFile => "VALIDATE_CROSS_FILE",
+            Self::RoundtripVerify => "ROUNDTRIP_VERIFY",
         }
     }
 
@@ -103,6 +110,9 @@ impl TaskType {
             "MERGE_CODE" => Some(Self::MergeCode),
             "IMPORT_SDEF" => Some(Self::ImportSdef),
             "EXPORT_SDEF" => Some(Self::ExportSdef),
+            "VALIDATE_DATA_MODEL" => Some(Self::ValidateDataModel),
+            "VALIDATE_CROSS_FILE" => Some(Self::ValidateCrossFile),
+            "ROUNDTRIP_VERIFY" => Some(Self::RoundtripVerify),
             _ => None,
         }
     }

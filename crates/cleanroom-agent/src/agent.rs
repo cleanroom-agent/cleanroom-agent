@@ -475,6 +475,9 @@ impl CleanroomAgent {
             project_name: project_name.clone(),
             checkpoint_interval_secs: 600,
             agent_idle_timeout_secs: 300,
+            num_producers: 1,
+            num_consumers: 0,
+            num_reviewers: 0,
         };
         let orchestrator = Orchestrator::new(config)?;
         orchestrator.start_workflow().await?;

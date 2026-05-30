@@ -315,6 +315,83 @@ fn slugify(s: &str) -> String {
         .to_string()
 }
 
+/// Propagate a design decision to all agents working on affected shards.
+///
+/// When one agent infers a design decision, this function notifies all
+/// other agents working on related shards so they don't duplicate work
+/// or make contradictory choices (docs/13 §6.2).
+pub fn propagate_decision(
+    db: &cleanroom_db::Database,
+    decision: &DesignDecision,
+    document_name: &str,
+) -> Result<usize, cleanroom_db::DbError> {
+    use cleanroom_db::AgentMessageRepository;
+    use cleanroom_db::AgentMessage as DbAgentMessage;
+
+    let msg_repo = AgentMessageRepository::new(db.connection_arc());
+
+    // Find agents working on tasks for this document
+    let task_repo = cleanroom_db::TaskRepository::new(db.connection_arc());
+    let active_tasks = task_repo.list(
+        Some(cleanroom_db::TaskStatus::InProgress),
+        None,
+        None,
+    )?;
+
+    // Collect unique agent IDs from in-progress tasks
+    let agents: Vec<String> = active_tasks
+        .iter()
+        .filter_map(|t| {
+            let input: serde_json::Value =
+                serde_json::from_str(&t.input_json).ok()?;
+            let doc = input.get("document")
+                .or_else(|| input.get("document_name"))
+                .and_then(|v| v.as_str())?;
+            if doc == document_name {
+                t.assigned_to.clone()
+            } else {
+                None
+            }
+        })
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut notified = 0;
+    for agent_id in &agents {
+        let msg = DbAgentMessage {
+            message_id: uuid::Uuid::new_v4().to_string(),
+            from: "system".to_string(),
+            to: agent_id.clone(),
+            message_type: cleanroom_db::MessageType::DependencyResolved {
+                task_id: format!("design_decision:{}", decision.id),
+            },
+            payload: serde_json::json!({
+                "decision": {
+                    "id": decision.id,
+                    "topic": decision.topic,
+                    "decision": decision.decision,
+                    "rationale": decision.rationale,
+                }
+            }),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            read: false,
+        };
+        msg_repo.send(&msg)?;
+        notified += 1;
+    }
+
+    if notified > 0 {
+        tracing::info!(
+            topic = %decision.topic,
+            agents = notified,
+            "Propagated design decision to agents"
+        );
+    }
+
+    Ok(notified)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

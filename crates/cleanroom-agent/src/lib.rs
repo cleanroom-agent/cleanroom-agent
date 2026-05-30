@@ -80,6 +80,10 @@ pub mod compat_detector;
 pub mod design_decisions;
 pub mod tree_sitter_parser;
 
+// Multi-agent collaboration (docs/13)
+pub mod collaboration;
+pub mod reviewer;
+
 pub use agent::{CleanroomAgent, AgentConfig, RunMode};
 pub use naming::{DeterministicNames, Language, NameStyle, NamespaceMode};
 pub use name_resolution::{NameResolutionService, ResolvedName};
@@ -104,3 +108,9 @@ pub use scheduler::{Scheduler, TaskPlan, ProgressSummary};
 pub use test_extractor::{extract_tests, build_test_contract, persist_test_contract, ExtractionResult};
 pub use compat_detector::{CompatDetector, DetectionResult, CompatPattern, CompatCategory, build_compat_module};
 pub use design_decisions::{infer_decisions, persist_decisions, InferenceResult};
+
+// Multi-agent collaboration re-exports
+pub use collaboration::messages::{MessageSender, MessagePoller};
+pub use collaboration::conflict_detector::{ConflictDetector, Conflict, Resolution};
+pub use collaboration::health_monitor::HealthMonitor;
+pub use reviewer::{ReviewerAgent, ReviewerConfig, ReviewReport, reviewer_loop};
