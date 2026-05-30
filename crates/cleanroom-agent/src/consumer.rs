@@ -29,7 +29,7 @@ use tracing::info;
 use rusqlite::params;
 use serde_json;
 
-use cleanroom_db::{Database, DbError, Task, TaskRepository, TaskType};
+use cleanroom_db::{Database, DbError, Task, TaskRepository, TaskType, TypeCacheRepository};
 
 pub mod code_generator;
 pub mod verification;
@@ -433,6 +433,36 @@ impl ConsumerAgent {
 }
 
 impl ConsumerAgent {
+    /// Look up a cached type resolution for an entity.
+    ///
+    /// Checks the `type_cache` table first to avoid re-querying LSP servers.
+    /// Returns `None` if no cached entry exists for this entity + language.
+    pub fn lookup_type_cache(
+        &self,
+        entity_uri: &str,
+        language: &str,
+    ) -> Result<Option<String>, DbError> {
+        let cache_repo = TypeCacheRepository::new(self.db.connection_arc());
+        match cache_repo.lookup(entity_uri, language)? {
+            Some(entry) => Ok(Some(entry.resolved_type)),
+            None => Ok(None),
+        }
+    }
+
+    /// Check if the type_cache has entries for the target language.
+    pub fn has_cached_types(&self, language: &str) -> Result<bool, DbError> {
+        let _cache_repo = TypeCacheRepository::new(self.db.connection_arc());
+        // Quick check: try to clear nothing and see if any entries existed
+        let conn = self.db.connection();
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM type_cache WHERE language = ?1")
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        let count: i64 = stmt
+            .query_row(rusqlite::params![language], |row| row.get(0))
+            .unwrap_or(0);
+        Ok(count > 0)
+    }
+
     /// Extract document name from task input JSON.
     fn extract_document_from_task(&self, task: &Task) -> String {
         serde_json::from_str::<serde_json::Value>(&task.input_json)

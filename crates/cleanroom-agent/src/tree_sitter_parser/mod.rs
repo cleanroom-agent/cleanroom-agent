@@ -746,6 +746,86 @@ fn extract_attrs_regex(
     attrs
 }
 
+// ─── Lightweight entity extraction for LSP fallback ──────────────────
+
+/// Extract entity (name, kind) pairs from source using tree-sitter.
+///
+/// Used by `lsp_analysis.rs` as a lightweight fallback when LSP is unavailable.
+/// Returns `Err` if no grammar is registered for this language.
+pub fn parse_entities_from_source(
+    content: &str,
+    language: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let grammar = {
+        let registry = grammar_registry().lock().map_err(|e| e.to_string())?;
+        registry.get(language).cloned()
+    };
+
+    let loaded = grammar.ok_or_else(|| format!("No grammar registered for '{}'", language))?;
+
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&loaded.ts_language)
+        .map_err(|e| e.to_string())?;
+
+    let tree = parser.parse(content, None)
+        .ok_or_else(|| "Tree-sitter parse returned None".to_string())?;
+    let root = tree.root_node();
+
+    let descriptors = known_grammars();
+    let desc = descriptors.iter()
+        .find(|d| d.language == language)
+        .ok_or_else(|| format!("Unknown grammar descriptor for '{}'", language))?;
+
+    let mut entities = Vec::new();
+    let mut cursor = root.walk();
+
+    for node in root.children(&mut cursor) {
+        for &top_kind in desc.top_level_nodes {
+            if node.kind() == top_kind {
+                let (name, kind) = extract_name_and_kind(&node, content, top_kind);
+                entities.push((name, kind));
+                break;
+            }
+        }
+    }
+
+    Ok(entities)
+}
+
+/// Extract symbol name and kind from a top-level CST node.
+fn extract_name_and_kind(node: &tree_sitter::Node, source: &str, node_kind: &str) -> (String, String) {
+    let kind_label = match node_kind {
+        "struct_item" | "struct_specifier" => "struct",
+        "enum_item" | "enum_specifier" => "enum",
+        "trait_item" => "trait",
+        "function_item" | "function_definition" | "function_declaration" => "function",
+        "class_declaration" | "_class_declaration" => "class",
+        "interface_declaration" => "interface",
+        "type_alias_declaration" => "type",
+        "module_declaration" | "import_statement" => "module",
+        _ => node_kind,
+    };
+
+    // Try to find the name child (usually identifier, type_identifier, or name)
+    let name = if let Some(name_node) = node.child_by_field_name("name") {
+        name_node.utf8_text(source.as_bytes()).unwrap_or("").to_string()
+    } else {
+        // Walk children looking for an identifier
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            let kind = child.kind();
+            if kind == "identifier" || kind == "type_identifier" || kind.contains("name") {
+                if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                    return (text.to_string(), kind_label.to_string());
+                }
+            }
+        }
+        "unknown".to_string()
+    };
+
+    (name, kind_label.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

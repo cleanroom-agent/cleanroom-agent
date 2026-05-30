@@ -39,9 +39,11 @@ use crate::dependency_graph::{DependencyGraph, DepNode, DepNodeType, DepEdgeKind
 use crate::ir_to_sdef::{SdefMapper, MapperConfig};
 use crate::module_partitioner::{partition_files, PartitionConfig};
 use crate::repo_scanner::{scan_repository, ScanConfig, SourceFile};
+use crate::lsp_analysis::{analyze_file_with_lsp_fallback, LspAnalysisOptions};
 use cleanroom_db::{Database, DbError};
+use cleanroom_lsp::LspServerPool;
 use sdef_core::SoftwareDefinition;
-use tracing::{info, instrument};
+use tracing::{info, warn, instrument};
 
 /// Result of a full producer pipeline run.
 ///
@@ -227,6 +229,128 @@ fn build_dependency_graph(_files: &[SourceFile], modules: &[crate::module_partit
     }
 
     graph
+}
+
+/// Run the complete producer pipeline with LSP-enhanced analysis.
+///
+/// This variant tries LSP first for type resolution and falls back to
+/// tree-sitter when LSP servers are unavailable. Results are cached
+/// in the `type_cache` table for cross-agent reuse.
+#[instrument(skip(db))]
+pub async fn run_analysis_pipeline_with_lsp(
+    db: Arc<Database>,
+    repo_path: &Path,
+    project_name: &str,
+    version: &str,
+    description: Option<String>,
+    lsp_enabled: bool,
+) -> Result<PipelineResult, DbError> {
+    // Run the standard pipeline first
+    let result = run_analysis_pipeline(
+        db.clone(),
+        repo_path,
+        project_name,
+        version,
+        description,
+    ).await?;
+
+    if !lsp_enabled {
+        return Ok(result);
+    }
+
+    // Phase: LSP Type Enhancement — enrich with type info from language servers
+    info!("Starting LSP-enhanced type resolution");
+
+    let pool = match LspServerPool::new() {
+        p => Arc::new(p),
+    };
+
+    let options = LspAnalysisOptions {
+        lsp_enabled: true,
+        cache_results: true,
+    };
+
+    // Detect languages in the repo
+    let _languages: Vec<String> = result.languages.clone();
+
+    // Find all source files from the scan result
+    let scan_config = crate::repo_scanner::ScanConfig {
+        root: repo_path.to_path_buf(),
+        ..crate::repo_scanner::ScanConfig::default()
+    };
+    let all_files = crate::repo_scanner::scan_repository(&scan_config);
+
+    let mut lsp_success_count = 0;
+    let mut cache_hit_count = 0;
+    let mut fallback_count = 0;
+
+    // Iterate over files and run LSP analysis on each
+    for file in &all_files {
+        let language = match &file.language {
+            Some(l) => map_lsp_language(l),
+            None => continue,
+        };
+
+        let analysis = analyze_file_with_lsp_fallback(
+            Some(&pool),
+            &file.path,
+            &language,
+            repo_path,
+            Some(&db),
+            &options,
+        ).await;
+
+        match analysis {
+            Ok(a) => match a.source {
+                crate::lsp_analysis::AnalysisSource::Lsp => {
+                    lsp_success_count += 1;
+                }
+                crate::lsp_analysis::AnalysisSource::TypeCache => {
+                    cache_hit_count += 1;
+                }
+                crate::lsp_analysis::AnalysisSource::TreeSitter => {
+                    fallback_count += 1;
+                }
+            },
+            Err(e) => {
+                warn!(path = %file.path.display(), error = %e, "LSP analysis error, skipped");
+                fallback_count += 1;
+            }
+        }
+    }
+
+    info!(
+        lsp_success = lsp_success_count,
+        cache_hit = cache_hit_count,
+        fallback = fallback_count,
+        "LSP type enhancement complete"
+    );
+
+    Ok(result)
+}
+
+/// Map internal language names to LSP language identifiers.
+fn map_lsp_language(lang: &str) -> String {
+    match lang {
+        "rust" => "rust",
+        "typescript" | "ts" => "typescript",
+        "javascript" | "js" => "javascript",
+        "python" | "py" => "python",
+        "go" | "golang" => "go",
+        "c" => "c",
+        "cpp" | "c++" => "c",
+        "java" => "java",
+        "csharp" | "c# " => "csharp",
+        "swift" => "swift",
+        "kotlin" => "kotlin",
+        "scala" => "scala",
+        "ruby" => "ruby",
+        "php" => "php",
+        "lua" => "lua",
+        "dart" => "dart",
+        "haskell" => "haskell",
+        _ => lang, // Pass through unknown languages
+    }.to_string()
 }
 
 fn collect_languages(files: &[SourceFile]) -> Vec<String> {

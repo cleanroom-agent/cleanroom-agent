@@ -79,6 +79,7 @@ pub mod test_extractor;
 pub mod compat_detector;
 pub mod design_decisions;
 pub mod tree_sitter_parser;
+pub mod lsp_analysis;
 
 // Multi-agent collaboration (docs/13)
 pub mod collaboration;
@@ -114,3 +115,7 @@ pub use collaboration::messages::{MessageSender, MessagePoller};
 pub use collaboration::conflict_detector::{ConflictDetector, Conflict, Resolution};
 pub use collaboration::health_monitor::HealthMonitor;
 pub use reviewer::{ReviewerAgent, ReviewerConfig, ReviewReport, reviewer_loop};
+pub use lsp_analysis::{
+    analyze_file_with_lsp_fallback, lookup_cached_type, has_cached_types,
+    EnhancedFileAnalysis, EnrichedSymbol, AnalysisSource, LspAnalysisOptions,
+};

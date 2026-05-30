@@ -24,7 +24,7 @@ use std::sync::Arc;
 use cleanroom_db::{Database, DbError, Task, TaskRepository, TaskType};
 use tracing::{info, instrument};
 
-use crate::producer_pipeline::run_analysis_pipeline;
+use crate::producer_pipeline::{run_analysis_pipeline, run_analysis_pipeline_with_lsp};
 
 /// Producer configuration.
 ///
@@ -131,14 +131,25 @@ impl ProducerAgent {
         // Update progress to 10%
         repo.update_progress(&task.task_id, 0.1)?;
 
-        // Run the full pipeline
-        let result = run_analysis_pipeline(
-            self.db.clone(),
-            repo_path,
-            project_name,
-            "0.1.0",
-            None,
-        ).await?;
+        // Run the full pipeline (with LSP if enabled)
+        let result = if self.config.lsp_enabled {
+            run_analysis_pipeline_with_lsp(
+                self.db.clone(),
+                repo_path,
+                project_name,
+                "0.1.0",
+                None,
+                true,
+            ).await?
+        } else {
+            run_analysis_pipeline(
+                self.db.clone(),
+                repo_path,
+                project_name,
+                "0.1.0",
+                None,
+            ).await?
+        };
 
         // Update progress to 90%
         repo.update_progress(&task.task_id, 0.9)?;
