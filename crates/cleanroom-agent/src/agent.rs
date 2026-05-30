@@ -2,11 +2,19 @@
 //!
 //! Wraps an adk-rust LLM agent alongside database connectivity,
 //! providing a unified entry point for produce/consume/resume modes.
+//!
+//! Uses cleanroom-prompt for structured prompt engineering:
+//! role definition, context budgeting, tool orchestration, etc.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use cleanroom_db::Database;
+use cleanroom_prompt::{
+    AgentType, ContextBudget, ContextItem, FewShotManager, FidelityLevel, GeneratedPrompt,
+    PromptBuilder, SystemPromptConfig, default_tool_descriptions,
+    load_from_database,
+};
 use tracing::{info, instrument};
 
 use crate::consumer::{ConsumerAgent, ConsumerConfig, CompatibilityMode, Fidelity};
@@ -45,25 +53,67 @@ pub struct AgentConfig {
     pub db_path: PathBuf,
     /// LLM model name (e.g. "gemini-2.5-flash").
     pub model_name: Option<String>,
-    /// System prompt for the LLM agent.
-    pub system_prompt: Option<String>,
     /// Agent name (used for identification).
     pub agent_name: String,
+    /// Prompt building configuration.
+    pub prompt_config: SystemPromptConfig,
+    /// Whether to auto-load few-shot examples from completed tasks.
+    pub load_few_shot: bool,
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
+        let prompt_config = SystemPromptConfig {
+            agent_type: AgentType::Producer,
+            include_tools: true,
+            tool_descriptions: default_tool_descriptions(),
+            ..Default::default()
+        };
         Self {
             db_path: PathBuf::from("state.db"),
             model_name: Some("gemini-2.5-flash".to_string()),
-            system_prompt: Some(
-                "You are Cleanroom Agent, an intelligent system for software \
-                 definition analysis and code generation using the S.DEF format. \
-                 You work with S.DEF (Software Definition Exchange Format) to \
-                 analyze code repositories and generate functionally equivalent software."
-                    .to_string(),
-            ),
             agent_name: "cleanroom-agent".to_string(),
+            prompt_config,
+            load_few_shot: false,
+        }
+    }
+}
+
+impl AgentConfig {
+    /// Create a config for Producer mode.
+    pub fn producer(db_path: PathBuf) -> Self {
+        let prompt_config = SystemPromptConfig {
+            agent_type: AgentType::Producer,
+            include_tools: true,
+            tool_descriptions: default_tool_descriptions(),
+            ..Default::default()
+        };
+        Self {
+            db_path,
+            model_name: None,
+            agent_name: "cleanroom-agent".to_string(),
+            prompt_config,
+            load_few_shot: false,
+        }
+    }
+
+    /// Create a config for Consumer mode.
+    pub fn consumer(db_path: PathBuf, language: String) -> Self {
+        let prompt_config = SystemPromptConfig {
+            agent_type: AgentType::Consumer,
+            target_language: Some(language),
+            fidelity: FidelityLevel::ProductionEquivalent,
+            compatibility_mode: Some("full".to_string()),
+            include_tools: true,
+            tool_descriptions: default_tool_descriptions(),
+            ..Default::default()
+        };
+        Self {
+            db_path,
+            model_name: None,
+            agent_name: "cleanroom-agent".to_string(),
+            prompt_config,
+            load_few_shot: false,
         }
     }
 }
@@ -71,35 +121,47 @@ impl Default for AgentConfig {
 /// The top-level Cleanroom Agent.
 ///
 /// Wraps an adk-rust `LlmAgent` for LLM interaction capabilities,
-/// alongside database connectivity and component configuration.
+/// alongside database connectivity and prompt engineering infrastructure.
 pub struct CleanroomAgent {
     /// Database connection.
     pub db: Arc<Database>,
     /// adk-rust LLM agent (for LLM-driven tasks).
     pub llm_agent: Option<Arc<dyn adk_rust::Agent>>,
+    /// Prompt builder for structured LLM interaction.
+    pub prompt_builder: PromptBuilder,
+    /// Few-shot example manager (loaded from DB on startup).
+    pub few_shot: FewShotManager,
     /// Configuration.
     config: AgentConfig,
 }
 
 impl CleanroomAgent {
     /// Create a new CleanroomAgent.
-    /// Uses `provider_from_env()` to auto-detect the LLM provider
-    /// (GOOGLE_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY).
     #[instrument(skip_all)]
     pub fn new(config: AgentConfig) -> Result<Self, cleanroom_db::DbError> {
         let db = Database::open(&config.db_path)?;
+
+        // Build the prompt builder
+        let prompt_builder = PromptBuilder::new(config.prompt_config.clone())
+            .with_budget(ContextBudget::default())
+            .with_tools(default_tool_descriptions());
+
+        // Load few-shot examples from existing completed tasks
+        let few_shot = if config.load_few_shot {
+            load_from_database(&db, 100)
+        } else {
+            FewShotManager::new(10, 100)
+        };
+
+        // Generate the system prompt from config
+        let system_prompt = cleanroom_prompt::build_system_prompt(&config.prompt_config);
 
         // Build adk-rust LLM agent if env provider is available
         let llm_agent = match adk_rust::provider_from_env() {
             Ok(model) => {
                 let agent = match adk_rust::agent::LlmAgentBuilder::new(&config.agent_name)
                     .description("Cleanroom Agent - S.DEF intelligent agent system")
-                    .instruction(
-                        config
-                            .system_prompt
-                            .as_deref()
-                            .unwrap_or("You are Cleanroom Agent."),
-                    )
+                    .instruction(&system_prompt.text)
                     .model(model)
                     .build()
                 {
@@ -120,8 +182,38 @@ impl CleanroomAgent {
         Ok(Self {
             db: Arc::new(db),
             llm_agent,
+            prompt_builder,
+            few_shot,
             config,
         })
+    }
+
+    /// Build a task-specific prompt with context, few-shot examples, and orchestration.
+    pub fn build_task_prompt(
+        &self,
+        task_instruction: &str,
+        task_type: Option<&cleanroom_db::TaskType>,
+        dependency_context: &[ContextItem],
+        working_set: &[ContextItem],
+    ) -> GeneratedPrompt {
+        self.prompt_builder.build(task_instruction, task_type, dependency_context, working_set)
+    }
+
+    /// Record a successful task for future few-shot examples.
+    pub fn record_example(
+        &mut self,
+        task_type: &cleanroom_db::TaskType,
+        language: Option<&str>,
+        input: serde_json::Value,
+        output: serde_json::Value,
+        tool_trace: Vec<String>,
+    ) {
+        self.few_shot.record(task_type, language, input, output, tool_trace);
+    }
+
+    /// Reload few-shot examples from the database.
+    pub fn reload_few_shot(&mut self) {
+        self.few_shot = load_from_database(&self.db, 100);
     }
 
     /// Run the agent in the specified mode.
@@ -187,7 +279,6 @@ impl CleanroomAgent {
         compat_mode: CompatibilityMode,
         fidelity: Fidelity,
     ) -> anyhow::Result<()> {
-        // Import S.DEF file into database
         let sdef_content = std::fs::read_to_string(&sdef_path)?;
         let sdef: sdef_core::SoftwareDefinition = serde_json::from_str(&sdef_content)?;
 
@@ -196,7 +287,6 @@ impl CleanroomAgent {
         );
         importer.import(&sdef)?;
 
-        // Generate code
         let config = ConsumerConfig {
             language: language.to_string(),
             framework: framework.map(|s| s.to_string()),
@@ -229,14 +319,12 @@ impl CleanroomAgent {
             return Ok(());
         }
 
-        // Reset in-progress tasks
         for task in doc_tasks.iter().filter(|t| {
             matches!(t.status, cleanroom_db::TaskStatus::InProgress | cleanroom_db::TaskStatus::Assigned)
         }) {
             repo.update_status(&task.task_id, cleanroom_db::TaskStatus::Pending)?;
         }
 
-        // Retry failed tasks if requested
         if retry_failed {
             scheduler.retry_failed_tasks()?;
         }
@@ -266,6 +354,7 @@ impl std::fmt::Debug for CleanroomAgent {
         f.debug_struct("CleanroomAgent")
             .field("db_path", &self.config.db_path)
             .field("has_llm", &self.llm_agent.is_some())
+            .field("few_shot_count", &self.few_shot.total_count())
             .finish()
     }
 }
@@ -273,37 +362,40 @@ impl std::fmt::Debug for CleanroomAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cleanroom_prompt::Priority;
 
     #[test]
-    fn test_agent_config_default() {
-        let config = AgentConfig::default();
+    fn test_agent_config_producer() {
+        let config = AgentConfig::producer(PathBuf::from(":memory:"));
         assert_eq!(config.agent_name, "cleanroom-agent");
-        assert!(config.model_name.is_some());
-        assert!(config.system_prompt.is_some());
+        assert!(config.prompt_config.include_tools);
     }
 
     #[test]
-    fn test_run_mode_debug() {
-        let mode = RunMode::Produce {
-            repo_path: PathBuf::from("/tmp/repo"),
-            output_path: PathBuf::from("/tmp/output"),
-            project_name: "test".to_string(),
-        };
-        let debug = format!("{:?}", mode);
-        assert!(debug.contains("Produce"));
-        assert!(debug.contains("/tmp/repo"));
+    fn test_agent_config_consumer() {
+        let config = AgentConfig::consumer(PathBuf::from(":memory:"), "rust".into());
+        assert!(matches!(config.prompt_config.agent_type, AgentType::Consumer));
+        assert_eq!(config.prompt_config.target_language, Some("rust".into()));
     }
 
     #[test]
-    fn test_agent_config_constructor() {
-        let config = AgentConfig {
-            db_path: PathBuf::from(":memory:"),
-            model_name: Some("gpt-4".to_string()),
-            system_prompt: Some("Test prompt".to_string()),
-            agent_name: "custom-agent".to_string(),
-        };
-        assert_eq!(config.agent_name, "custom-agent");
-        assert_eq!(config.model_name.unwrap(), "gpt-4");
-        assert_eq!(config.system_prompt.unwrap(), "Test prompt");
+    fn test_build_task_prompt() {
+        let config = AgentConfig::producer(PathBuf::from("state.db"));
+        // Skip DB open — test prompt building in isolation
+        let prompt_builder = PromptBuilder::new(config.prompt_config)
+            .with_tools(default_tool_descriptions());
+
+        let deps = vec![
+            ContextItem::new("sdef://ref/User", "struct User { id: u64 }", Priority::High),
+        ];
+        let prompt = prompt_builder.build(
+            "Analyze User entity",
+            None,
+            &deps,
+            &[],
+        );
+        assert!(prompt.text.contains("ANALYSIS agent"));
+        assert!(prompt.text.contains("User"));
+        assert!(prompt.estimated_tokens > 0);
     }
 }

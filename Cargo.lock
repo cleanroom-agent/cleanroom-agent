@@ -461,6 +461,7 @@ dependencies = [
  "chrono",
  "cleanroom-db",
  "cleanroom-lsp",
+ "cleanroom-prompt",
  "futures",
  "glob",
  "ignore",
@@ -563,6 +564,22 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "cleanroom-prompt"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cleanroom-db",
+ "regex-lite",
+ "sdef-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
  "tracing",
  "uuid",
 ]
@@ -1808,6 +1825,12 @@ dependencies = [
  "memchr",
  "regex-syntax",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"

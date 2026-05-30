@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 cleanroom-db = { path = "../cleanroom-db" }
 cleanroom-lsp = { path = "../cleanroom-lsp" }
+cleanroom-prompt = { path = "../cleanroom-prompt" }
 sdef-core = { path = "../sdef-core" }
 adk-rust.workspace = true
 tokio.workspace = true
