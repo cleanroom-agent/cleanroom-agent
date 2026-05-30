@@ -1,4 +1,25 @@
-//! Absorb human changes — reverse syncs human-modified code back into S.DEF.
+//! Human Change Absorber — reverse syncs human-modified code back into S.DEF.
+//!
+//! This module provides functionality to detect and absorb human modifications
+//! to generated code files. When humans edit generated code, the absorber can:
+//!
+//! 1. Detect content changes via SHA-256 fingerprint comparison
+//! 2. Identify new files added by humans
+//! 3. Detect deleted files
+//! 4. Update fingerprints and audit logs
+//!
+//! # Process
+//!
+//! 1. [`HumanChangeAbsorber::scan`] - Scan files and compare hashes with stored fingerprints
+//! 2. [`HumanChangeAbsorber::absorb`] - Apply detected changes to database
+//!
+//! # Change Types
+//!
+//! - [`ChangeType::FileAdded`]: New file detected that wasn't in fingerprints
+//! - [`ChangeType::ContentModified`]: File content changed (fingerprint mismatch)
+//! - [`ChangeType::FileDeleted`]: Previously tracked file no longer exists
+//! - [`ChangeType::StructureAdded`]: New structure detected in existing file
+//! - [`ChangeType::StructureRemoved`]: Structure removed from file
 
 use std::collections::HashMap;
 use std::path::Path;

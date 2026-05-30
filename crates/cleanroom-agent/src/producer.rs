@@ -1,4 +1,22 @@
-//! Producer Agent — analyzes code repositories.
+//! Producer Agent — analyzes code repositories and produces S.DEF documents.
+//!
+//! The Producer Agent is responsible for the "produce" phase of the Cleanroom
+//! agent pipeline. It takes a source code repository and generates a complete
+//! S.DEF (Software Definition Exchange Format) document describing the codebase.
+//!
+//! # Pipeline
+//!
+//! The producer uses the full analysis pipeline via [`run_analysis_pipeline`]:
+//! 1. Repository scanning via [`scan_repository`](crate::repo_scanner::scan_repository)
+//! 2. Module partitioning via [`partition_files`](crate::module_partitioner::partition_files)
+//! 3. Dependency graph construction via [`DependencyGraph`]
+//! 4. IR to S.DEF mapping via [`SdefMapper`]
+//! 5. Persistence to database
+//!
+//! # Task Processing
+//!
+//! The agent claims and processes tasks from the database task queue.
+//! Each task may represent a different phase of repository analysis.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -9,11 +27,13 @@ use tracing::{info, instrument};
 use crate::producer_pipeline::run_analysis_pipeline;
 
 /// Producer configuration.
+///
+/// Contains settings for the producer agent's behavior during code analysis.
 #[derive(Debug, Clone)]
 pub struct ProducerConfig {
-    /// Supported languages.
+    /// List of programming languages the producer should recognize
     pub languages: Vec<String>,
-    /// LSP server configurations.
+    /// Whether to enable LSP (Language Server Protocol) for enhanced analysis
     pub lsp_enabled: bool,
 }
 
@@ -32,14 +52,23 @@ impl Default for ProducerConfig {
     }
 }
 
-/// Producer Agent — analyzes code repositories.
+/// Producer Agent — analyzes code repositories and produces S.DEF documents.
+///
+/// The Producer Agent claims tasks from the database queue and executes
+/// repository analysis via the producer pipeline. Each successful analysis
+/// results in a complete S.DEF document stored in the database.
+///
+/// # Task Types
+///
+/// The producer handles the following task types:
+/// - [`TaskType::RepoAnalyze`]: Full repository analysis
 #[allow(dead_code)]
 pub struct ProducerAgent {
-    /// Configuration.
+    /// Producer configuration settings
     pub(crate) config: ProducerConfig,
-    /// Database connection.
+    /// Database connection for task persistence
     db: Arc<Database>,
-    /// Agent ID.
+    /// Unique agent identifier for task claiming
     agent_id: String,
 }
 

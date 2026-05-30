@@ -1,4 +1,55 @@
 //! cleanroom-agent — Agent core logic for Cleanroom.
+//!
+//! This crate provides the core agent system for the Cleanroom S.DEF (Software Definition Exchange Format)
+//! intelligent agent. It handles the bidirectional flow between source code repositories and S.DEF
+//! documents through a produce/consume pipeline.
+//!
+//! ## Architecture
+//!
+//! The agent system consists of two main pipelines:
+//!
+//! - **Producer Pipeline**: Analyzes code repositories and generates S.DEF documents
+//!   - Repository scanning and file discovery
+//!   - Module partitioning and dependency analysis
+//!   - Tree-sitter based code parsing
+//!   - IR (Intermediate Representation) to S.DEF mapping
+//!   - Persistence to SQLite database
+//!
+//! - **Consumer Pipeline**: Generates code from S.DEF documents
+//!   - S.DEF import and parsing
+//!   - Language-specific code generation
+//!   - Multi-language support (Rust, TypeScript, Python, C)
+//!   - Verification and testing
+//!
+//! ## Key Components
+//!
+//! - [`CleanroomAgent`]: Top-level agent entry point with produce/consume/resume modes
+//! - [`ProducerAgent`]: Analyzes code repositories and produces S.DEF
+//! - [`ConsumerAgent`]: Generates code from S.DEF documents
+//! - [`Orchestrator`]: Coordinates task execution and workflow management
+//! - [`SdefMapper`]: Maps code analysis results to S.DEF entities
+//! - [`DependencyGraph`]: Analyzes dependencies between entities
+//! - [`ConsistencyService`]: Ensures S.DEF, DB, and code are in sync
+//! - [`CompletenessValidator`]: Validates S.DEF analysis quality
+//!
+//! ## Usage
+//!
+//! ```no_run
+//! use cleanroom_agent::{CleanroomAgent, AgentConfig, RunMode};
+//! use std::path::PathBuf;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = AgentConfig::producer(PathBuf::from("./my-repo"));
+//! let agent = CleanroomAgent::new(config)?;
+//!
+//! agent.run(RunMode::Produce {
+//!     repo_path: PathBuf::from("./my-repo"),
+//!     output_path: PathBuf::from("./output"),
+//!     project_name: "my-project".to_string(),
+//! }).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 #![allow(missing_docs)]
 

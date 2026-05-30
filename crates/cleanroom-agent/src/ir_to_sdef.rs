@@ -1,4 +1,31 @@
 //! IR → S.DEF mapper — converts code analysis results into S.DEF entities.
+//!
+//! This module transforms the Intermediate Representation (IR) extracted from
+//! source code into S.DEF (Software Definition Exchange Format) entities.
+//!
+//! # Mapping Pipeline
+//!
+//! 1. **Module Analysis**: Each module is analyzed to extract entities
+//! 2. **File Analysis**: Source files are parsed with tree-sitter or regex fallback
+//! 3. **Entity Building**: IR entities are converted to S.DEF types
+//! 4. **Persistence**: S.DEF entities are stored in the database
+//!
+//! # IR Types
+//!
+//! - [`IrEntity::DataModel`]: Data structures (structs, classes)
+//! - [`IrEntity::Interface`]: Interfaces and traits
+//! - [`IrEntity::Function`]: Functions and methods
+//!
+//! # Database Schema
+//!
+//! The mapper persists to the following tables:
+//! - `sdef_documents`: Document metadata
+//! - `data_models`: Data entity definitions
+//! - `data_attributes`: Entity fields
+//! - `contracts`: Interface definitions
+//! - `function_specs`: Function definitions
+//! - `symbol_registry`: Symbol name mappings
+//! - `fingerprints`: Consistency tracking hashes
 
 use std::sync::Arc;
 

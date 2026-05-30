@@ -1,4 +1,42 @@
 //! Dependency graph — represents and analyzes dependencies between entities.
+//!
+//! This module provides a directed graph data structure for tracking dependencies
+//! between modules, files, interfaces, and entities in a codebase.
+//!
+//! # Features
+//!
+//! - **Cycle Detection**: Detects circular dependencies using DFS
+//! - **Topological Sort**: Provides a valid ordering when no cycles exist
+//! - **Upstream/Downstream Analysis**: Query what a node depends on or what depends on it
+//! - **Level Calculation**: Compute the depth/distance from root nodes
+//!
+//! # Graph Structure
+//!
+//! - Nodes represent entities (files, modules, interfaces, data models)
+//! - Edges represent dependencies (imports, extends, implements, references)
+//! - The graph is directed: edges go from dependent to dependency
+//!
+//! # Usage
+//!
+//! ```no_run
+//! use cleanroom_agent::dependency_graph::{DependencyGraph, DepNode, DepNodeType, DepEdgeKind};
+//!
+//! let mut graph = DependencyGraph::new();
+//! graph.add_node(DepNode {
+//!     id: "module:auth".to_string(),
+//!     name: "auth".to_string(),
+//!     node_type: DepNodeType::Module,
+//! });
+//! graph.add_node(DepNode {
+//!     id: "module:users".to_string(),
+//!     name: "users".to_string(),
+//!     node_type: DepNodeType::Module,
+//! });
+//! graph.add_edge("module:auth", "module:users", DepEdgeKind::Import);
+//!
+//! let cycles = graph.detect_cycles();
+//! assert!(cycles.is_empty());
+//! ```
 
 use std::collections::{HashMap, HashSet, VecDeque};
 

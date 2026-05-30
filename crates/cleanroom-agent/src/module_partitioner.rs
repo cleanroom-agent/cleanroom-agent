@@ -1,4 +1,29 @@
 //! Module partitioner — groups source files into logical modules.
+//!
+//! This module provides functionality for partitioning source files into
+//! logical modules based on package manager boundaries and directory structure.
+//!
+//! # Module Types
+//!
+//! - [`ModuleType::CargoCrate`]: Rust crate (detected via `Cargo.toml`)
+//! - [`ModuleType::NpmPackage`]: npm package (detected via `package.json`)
+//! - [`ModuleType::PythonPackage`]: Python package (detected via `__init__.py`)
+//! - [`ModuleType::GoModule`]: Go module (detected via `go.mod`)
+//! - [`ModuleType::Directory`]: Directory-based module (no package manager)
+//!
+//! # Usage
+//!
+//! ```no_run
+//! use cleanroom_agent::module_partitioner::{partition_files, PartitionConfig};
+//! use cleanroom_agent::repo_scanner::scan_repository;
+//!
+//! let files = scan_repository(&Default::default());
+//! let config = PartitionConfig::default();
+//! let modules = partition_files(files, &config);
+//! for module in modules {
+//!     println!("Module: {} ({} files)", module.name, module.files.len());
+//! }
+//! ```
 
 use std::collections::HashMap;
 use std::path::PathBuf;

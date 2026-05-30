@@ -1,7 +1,45 @@
 //! Task Scheduler — creates and dispatches analysis/generation tasks.
 //!
-//! Manages the lifecycle of tasks: initial creation, dependency ordering,
+//! This module manages the lifecycle of tasks: initial creation, dependency ordering,
 //! retry logic, checkpointing, and workflow progress monitoring.
+//!
+//! # Task Plans
+//!
+//! Tasks are created from [`TaskPlan`]s that define:
+//! - **Priority groups**: Tasks run in priority order (higher first)
+//! - **Dependencies**: Tasks can depend on other tasks completing first
+//! - **Retry policy**: Maximum retry count before marking as failed permanently
+//!
+//! # Predefined Plans
+//!
+//! - [`TaskPlan::analysis_plan`]: Full repository analysis workflow
+//! - [`TaskPlan::generation_plan`]: Code generation workflow
+//!
+//! # Checkpointing
+//!
+//! The scheduler supports automatic checkpoint creation and restoration,
+//! allowing workflows to be resumed after interruption.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use cleanroom_agent::scheduler::{Scheduler, TaskPlan};
+//! use cleanroom_db::Database;
+//! use std::sync::Arc;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let db = Arc::new(Database::open(&std::path::PathBuf::from("state.db"))?);
+//! let scheduler = Scheduler::new(db);
+//!
+//! let plan = TaskPlan::analysis_plan("my-project");
+//! let task_ids = scheduler.create_from_plan(&plan)?;
+//! println!("Created {} tasks", task_ids.len());
+//!
+//! let progress = scheduler.get_progress()?;
+//! println!("Progress: {:.1}%", progress.overall_progress * 100.0);
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,21 +50,46 @@ use cleanroom_db::{
 use tracing::{info, warn, instrument};
 
 /// A plan for task execution — what tasks to create and in what order.
+///
+/// Task plans define an ordered set of tasks with dependencies and priorities.
+/// Tasks are organized into priority groups, where higher priority groups
+/// are executed before lower ones. Within a group, tasks can have dependencies
+/// on tasks in earlier groups.
+///
+/// # Example
+///
+/// ```
+/// use cleanroom_agent::scheduler::{TaskPlan, TaskTemplate};
+/// use cleanroom_db::TaskType;
+///
+/// let plan = TaskPlan::analysis_plan("my-project");
+/// for (i, group) in plan.priority_groups.iter().enumerate() {
+///     println!("Priority group {}: {} tasks", i, group.len());
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct TaskPlan {
-    /// Tasks grouped by priority level (higher runs first).
+    /// Tasks grouped by priority level (higher priority groups run first)
     pub priority_groups: Vec<Vec<TaskTemplate>>,
-    /// Document name for scoping.
+    /// Document name for scoping all tasks in this plan
     pub document_name: String,
 }
 
-/// Template for creating a task.
+/// Template for creating a task with all its configuration.
+///
+/// Contains all information needed to create a task, including
+/// type, priority, input data, dependencies, and retry policy.
 #[derive(Debug, Clone)]
 pub struct TaskTemplate {
+    /// The type of task to create
     pub task_type: TaskType,
+    /// Priority level (higher runs first)
     pub priority: i32,
+    /// JSON input data for the task
     pub input: serde_json::Value,
+    /// Indices into the flattened task list that this task depends on
     pub dependency_indices: Vec<usize>,
+    /// Maximum number of retry attempts before marking as failed
     pub max_retries: i32,
 }
 

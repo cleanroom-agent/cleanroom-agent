@@ -1,9 +1,36 @@
 //! Rust code generator.
+//!
+//! Transforms S.DEF (Software Definition Exchange Format) entities into
+//! Rust source code, including structs, traits, and functions.
+//!
+//! # Generated Code
+//!
+//! - Data models become `pub struct` with serde derives
+//! - Interfaces become `pub trait`
+//! - Functions become `pub fn` with typed parameters
+//! - Field names use snake_case
+//! - Types are mapped from S.DEF types to Rust types
+//!
+//! # Type Mapping
+//!
+//! | S.DEF Type | Rust Type |
+//! |------------|-----------|
+//! | UUID       | uuid::Uuid |
+//! | timestamp  | chrono::DateTime<chrono::Utc> |
+//! | string     | String |
+//! | integer   | i32 |
+//! | int64      | i64 |
+//! | boolean    | bool |
+//! | json       | serde_json::Value |
 
 use super::{CodeGenerator, GeneratedCode};
 use sdef_core::{DataModel, InterfaceContract, ClassContract, FunctionSpec};
 
 /// Rust language code generator.
+///
+/// Implements the [`CodeGenerator`] trait to produce Rust source code
+/// from S.DEF entities. Generates structs with serde derives, traits,
+/// and free functions with proper type mappings.
 pub struct RustGenerator;
 
 impl CodeGenerator for RustGenerator {

@@ -1,4 +1,32 @@
 //! Completeness validation — multi-layer verification of S.DEF analysis quality.
+//!
+//! This module provides verification that ensures the S.DEF document produced
+//! from code analysis is complete and high quality. It performs five layers
+//! of verification to catch issues before they propagate.
+//!
+//! # Verification Layers
+//!
+//! 1. **File Coverage**: What percentage of tasks completed successfully
+//! 2. **Dependency Integrity**: Check for isolated or missing entity references
+//! 3. **Interface Coverage**: Every public interface has methods defined
+//! 4. **Entity Coverage**: Every data model has attributes with types
+//! 5. **Cross Validation**: Multiple data sources agree on definitions
+//!
+//! # Usage
+//!
+//! ```no_run
+//! use cleanroom_agent::completeness::{CompletenessValidator, format_report};
+//! use cleanroom_db::Database;
+//! use std::sync::Arc;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let db = Arc::new(Database::open(&std::path::PathBuf::from("state.db"))?);
+//! let validator = CompletenessValidator::new(db);
+//! let report = validator.validate("my-project")?;
+//! println!("{}", format_report(&report));
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -7,32 +35,55 @@ use tracing::instrument;
 
 use cleanroom_db::{Database, DbError, TaskRepository, TaskStatus};
 
-/// Coverage score from 0.0 to 1.0.
+/// Coverage score from 0.0 to 1.0 for completeness validation.
+///
+/// A score of 1.0 indicates perfect coverage, while 0.0 indicates
+/// no coverage. Each field represents a different verification layer.
 #[derive(Debug, Clone)]
 pub struct CoverageScore {
+    /// File/task completion coverage (what % of tasks completed successfully)
     pub file_coverage: f64,
+    /// Dependency integrity coverage (are all entities properly referenced)
     pub dependency_coverage: f64,
+    /// Interface coverage (do interfaces have methods)
     pub interface_coverage: f64,
+    /// Entity coverage (do data models have typed attributes)
     pub entity_coverage: f64,
+    /// Cross-validation score (do multiple sources agree)
     pub cross_validation: f64,
+    /// Overall weighted average across all layers
     pub overall: f64,
 }
 
-/// Result of completeness verification for a single check.
+/// Result of completeness verification for a single layer.
+///
+/// Contains details about a specific verification layer's result,
+/// including the score, whether it passed, and any warnings.
 #[derive(Debug, Clone)]
 pub struct VerificationResult {
+    /// Name of the verification layer
     pub layer: &'static str,
+    /// Whether this layer passed its threshold
     pub passed: bool,
+    /// Score from 0.0 to 1.0
     pub score: f64,
+    /// Human-readable details about the verification
     pub details: Vec<String>,
+    /// Warnings about issues found (e.g., "3 attributes missing type info")
     pub warnings: Vec<String>,
 }
 
-/// Full completeness report.
+/// Full completeness report for a document.
+///
+/// Contains results from all five verification layers plus an overall
+/// coverage score. Use [`format_report`] to render as a human-readable string.
 #[derive(Debug, Clone)]
 pub struct CompletenessReport {
+    /// Name of the document this report is for
     pub document_name: String,
+    /// Results from each verification layer
     pub results: Vec<VerificationResult>,
+    /// Aggregate scores across all layers
     pub overall_score: CoverageScore,
 }
 
@@ -42,11 +93,28 @@ pub struct CompletenessValidator {
 }
 
 impl CompletenessValidator {
+    /// Create a new completeness validator.
+    ///
+    /// # Arguments
+    /// * `db` - Database connection for reading S.DEF and task data
     pub fn new(db: Arc<Database>) -> Self {
         Self { db }
     }
 
     /// Run all five verification layers.
+    ///
+    /// Executes comprehensive completeness validation across all layers:
+    /// 1. File/Task coverage
+    /// 2. Dependency integrity
+    /// 3. Interface coverage
+    /// 4. Entity coverage
+    /// 5. Cross-validation
+    ///
+    /// # Arguments
+    /// * `document_name` - Name of the S.DEF document to validate
+    ///
+    /// # Returns
+    /// A [`CompletenessReport`] with scores and warnings for each layer
     #[instrument(skip(self))]
     pub fn validate(&self, document_name: &str) -> Result<CompletenessReport, DbError> {
         let layer1 = self.verify_file_coverage(document_name)?;

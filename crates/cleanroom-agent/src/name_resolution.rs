@@ -1,4 +1,42 @@
 //! Name resolution service — deterministic naming + DB persistence with collision detection.
+//!
+//! This service resolves S.DEF URIs to concrete symbol names in specific programming
+//! languages, handling namespace conventions, collision detection, and database persistence.
+//!
+//! # Name Resolution Process
+//!
+//! 1. **Lookup**: Check if the symbol is already registered in the database
+//! 2. **Generation**: If not found, generate a name using language-appropriate conventions
+//! 3. **Registration**: Register the symbol with collision-aware handling
+//! 4. **Resolution**: Return the concrete name for the target language
+//!
+//! # Namespace Modes
+//!
+//! - [`NamespaceMode::FromDocumentName`](crate::naming::NamespaceMode::FromDocumentName): Prefix with document name
+//! - [`NamespaceMode::Manual`](crate::naming::NamespaceMode::Manual): Use custom namespace prefix
+//! - [`NamespaceMode::None`](crate::naming::NamespaceMode::None): Use bare names without prefix
+//!
+//! # Example
+//!
+//! ```no_run
+//! use cleanroom_agent::name_resolution::NameResolutionService;
+//! use cleanroom_db::Database;
+//! use std::sync::Arc;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let db = Arc::new(Database::open(&std::path::PathBuf::from("state.db"))?);
+//! let svc = NameResolutionService::new(db);
+//!
+//! let resolved = svc.resolve(
+//!     "my-project",
+//!     "sdef://my-project/entity/User",
+//!     "rust",
+//!     cleanroom_db::SymbolType::Class,
+//! )?;
+//! println!("Concrete name: {}", resolved.concrete_name);
+//! # Ok(())
+//! # }
+//! ```
 
 use std::sync::Arc;
 
@@ -7,19 +45,33 @@ use tracing::{instrument, warn};
 
 use crate::naming::{DeterministicNames, Language};
 
-/// A resolved symbol with metadata.
+/// A resolved symbol with its metadata.
+///
+/// Contains the result of resolving a S.DEF URI to a concrete symbol name
+/// in a specific programming language, including whether this was a new
+/// registration or an existing lookup.
 #[derive(Debug, Clone)]
 pub struct ResolvedName {
+    /// The original S.DEF URI that was resolved
     pub sdef_uri: String,
+    /// The concrete symbol name in the target language
     pub concrete_name: String,
+    /// The target programming language
     pub language: String,
+    /// The type of symbol (class, function, interface, etc.)
     pub symbol_type: SymbolType,
+    /// Whether this was a newly registered symbol (vs. a cache hit)
     pub is_new: bool,
 }
 
 /// Name resolution service.
+///
+/// Resolves S.DEF URIs to concrete symbol names using language-appropriate
+/// naming conventions, with database persistence for caching and collision detection.
 pub struct NameResolutionService {
+    /// Database connection for symbol storage
     db: Arc<Database>,
+    /// Deterministic naming service for convention conversion
     names: DeterministicNames,
 }
 

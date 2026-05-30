@@ -5,6 +5,33 @@
 //!
 //! Uses cleanroom-prompt for structured prompt engineering:
 //! role definition, context budgeting, tool orchestration, etc.
+//!
+//! # Run Modes
+//!
+//! The agent supports three primary execution modes:
+//!
+//! - **Produce Mode**: Analyzes a code repository and outputs an S.DEF document
+//! - **Consume Mode**: Reads an S.DEF document and generates code in a target language
+//! - **Resume Mode**: Restores a paused workflow from a checkpoint
+//!
+//! # Example
+//!
+//! ```no_run
+//! use cleanroom_agent::{CleanroomAgent, AgentConfig, RunMode};
+//! use std::path::PathBuf;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = AgentConfig::producer(PathBuf::from("state.db"));
+//! let agent = CleanroomAgent::new(config)?;
+//!
+//! agent.run(RunMode::Produce {
+//!     repo_path: PathBuf::from("./my-repo"),
+//!     output_path: PathBuf::from("./output"),
+//!     project_name: "my-project".to_string(),
+//! }).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,43 +48,91 @@ use crate::consumer::{ConsumerAgent, ConsumerConfig, CompatibilityMode, Fidelity
 use crate::orchestrator::{Orchestrator, OrchestratorConfig};
 use crate::producer::{ProducerAgent, ProducerConfig};
 
-/// Run mode for the agent.
+/// Run mode for the CleanroomAgent.
+///
+/// Determines the execution mode and required parameters for the agent:
+/// - [`Produce`](RunMode::Produce): Analyze a code repository and generate S.DEF
+/// - [`Consume`](RunMode::Consume): Generate code from an S.DEF document
+/// - [`Resume`](RunMode::Resume): Resume a paused workflow from checkpoint
 #[derive(Debug, Clone)]
 pub enum RunMode {
     /// Analyze a code repository and output S.DEF.
+    ///
+    /// # Fields
+    /// - `repo_path`: Path to the source code repository
+    /// - `output_path`: Directory for S.DEF output
+    /// - `project_name`: Name for the generated S.DEF document
     Produce {
+        /// Path to the source code repository to analyze
         repo_path: PathBuf,
+        /// Directory where S.DEF documents will be written
         output_path: PathBuf,
+        /// Name for the generated S.DEF document
         project_name: String,
     },
-    /// Read S.DEF and generate code.
+    /// Read S.DEF and generate code in a target language.
+    ///
+    /// # Fields
+    /// - `sdef_path`: Path to the S.DEF input file
+    /// - `output_path`: Directory for generated code output
+    /// - `language`: Target programming language (rust, typescript, python, etc.)
+    /// - `framework`: Optional target framework hint
+    /// - `compat_mode`: Compatibility mode for code generation
+    /// - `fidelity`: Fidelity level for reconstruction
     Consume {
+        /// Path to the S.DEF input document
         sdef_path: PathBuf,
+        /// Directory where generated code will be written
         output_path: PathBuf,
+        /// Target programming language for code generation
         language: String,
+        /// Optional framework hint (e.g., "actix-web" for Rust)
         framework: Option<String>,
+        /// Compatibility mode handling legacy patterns
         compat_mode: CompatibilityMode,
+        /// Fidelity level for code reconstruction
         fidelity: Fidelity,
     },
-    /// Resume a paused workflow from checkpoint.
+    /// Resume a paused workflow from a checkpoint.
+    ///
+    /// # Fields
+    /// - `document`: Document name or identifier to resume tasks for
+    /// - `retry_failed`: Whether to also retry tasks that previously failed
     Resume {
+        /// Document name or identifier to resume tasks for
         document: String,
+        /// Whether to retry tasks that previously failed
         retry_failed: bool,
     },
 }
 
 /// Configuration for the top-level CleanroomAgent.
+///
+/// Contains all settings needed to initialize and run the Cleanroom agent,
+/// including database connection, LLM provider, and prompt engineering settings.
+///
+/// # Example
+///
+/// ```no_run
+/// use cleanroom_agent::AgentConfig;
+/// use std::path::PathBuf;
+///
+/// let config = AgentConfig::consumer(
+///     PathBuf::from("state.db"),
+///     "rust".to_string()
+/// );
+/// ```
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
-    /// Database path.
+    /// Path to the SQLite database for state persistence
     pub db_path: PathBuf,
-    /// LLM model name (e.g. "gemini-2.5-flash").
+    /// LLM model name (e.g. "gemini-2.5-flash"). Uses environment if None.
     pub model_name: Option<String>,
-    /// Agent name (used for identification).
+    /// Agent name for identification and logging
     pub agent_name: String,
-    /// Prompt building configuration.
+    /// Prompt building configuration for LLM interaction
     pub prompt_config: SystemPromptConfig,
-    /// Whether to auto-load few-shot examples from completed tasks.
+    /// Whether to auto-load few-shot examples from completed tasks in DB
     pub load_few_shot: bool,
 }
 
@@ -80,7 +155,23 @@ impl Default for AgentConfig {
 }
 
 impl AgentConfig {
-    /// Create a config for Producer mode.
+    /// Create a configuration preset for Producer mode.
+    ///
+    /// Producer mode analyzes code repositories and generates S.DEF documents.
+    /// This preset configures the agent with appropriate prompt settings
+    /// for the code analysis role.
+    ///
+    /// # Arguments
+    /// * `db_path` - Path to the SQLite database for state persistence
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cleanroom_agent::AgentConfig;
+    /// use std::path::PathBuf;
+    ///
+    /// let config = AgentConfig::producer(PathBuf::from("state.db"));
+    /// ```
     pub fn producer(db_path: PathBuf) -> Self {
         let prompt_config = SystemPromptConfig {
             agent_type: AgentType::Producer,
@@ -97,7 +188,27 @@ impl AgentConfig {
         }
     }
 
-    /// Create a config for Consumer mode.
+    /// Create a configuration preset for Consumer mode.
+    ///
+    /// Consumer mode reads S.DEF documents and generates code in a target language.
+    /// This preset configures the agent with appropriate prompt settings
+    /// for the code generation role.
+    ///
+    /// # Arguments
+    /// * `db_path` - Path to the SQLite database for state persistence
+    /// * `language` - Target programming language for code generation
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cleanroom_agent::AgentConfig;
+    /// use std::path::PathBuf;
+    ///
+    /// let config = AgentConfig::consumer(
+    ///     PathBuf::from("state.db"),
+    ///     "rust".to_string()
+    /// );
+    /// ```
     pub fn consumer(db_path: PathBuf, language: String) -> Self {
         let prompt_config = SystemPromptConfig {
             agent_type: AgentType::Consumer,
@@ -122,21 +233,75 @@ impl AgentConfig {
 ///
 /// Wraps an adk-rust `LlmAgent` for LLM interaction capabilities,
 /// alongside database connectivity and prompt engineering infrastructure.
+///
+/// This is the main entry point for the Cleanroom agent system. It supports
+/// three run modes: Produce (code → S.DEF), Consume (S.DEF → code), and
+/// Resume (restore workflow from checkpoint).
+///
+/// # Architecture
+///
+/// The agent coordinates with:
+/// - [`Orchestrator`]: Task orchestration and workflow management
+/// - [`ProducerAgent`]: Code repository analysis and S.DEF generation
+/// - [`ConsumerAgent`]: S.DEF consumption and code generation
+/// - [`Database`]: SQLite persistence for state, tasks, and S.DEF documents
+///
+/// # Example
+///
+/// ```no_run
+/// use cleanroom_agent::{CleanroomAgent, AgentConfig, RunMode};
+/// use std::path::PathBuf;
+/// use std::sync::Arc;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = AgentConfig::producer(PathBuf::from("state.db"));
+/// let agent = CleanroomAgent::new(config)?;
+///
+/// agent.run(RunMode::Produce {
+///     repo_path: PathBuf::from("./my-repo"),
+///     output_path: PathBuf::from("./output"),
+///     project_name: "my-project".to_string(),
+/// }).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct CleanroomAgent {
-    /// Database connection.
+    /// Database connection for state persistence and S.DEF storage
     pub db: Arc<Database>,
-    /// adk-rust LLM agent (for LLM-driven tasks).
+    /// adk-rust LLM agent for LLM-driven tasks (None if no provider available)
     pub llm_agent: Option<Arc<dyn adk_rust::Agent>>,
-    /// Prompt builder for structured LLM interaction.
+    /// Prompt builder for structured LLM interaction
     pub prompt_builder: PromptBuilder,
-    /// Few-shot example manager (loaded from DB on startup).
+    /// Few-shot example manager loaded from database on startup
     pub few_shot: FewShotManager,
-    /// Configuration.
+    /// Agent configuration
     config: AgentConfig,
 }
 
 impl CleanroomAgent {
-    /// Create a new CleanroomAgent.
+    /// Create a new CleanroomAgent instance.
+    ///
+    /// Initializes the database connection, prompt builder, and optionally
+    /// the LLM agent based on environment configuration.
+    ///
+    /// # Arguments
+    /// * `config` - Agent configuration including DB path and prompt settings
+    ///
+    /// # Returns
+    /// Returns a `Result` containing the new agent instance or a database error.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cleanroom_agent::{CleanroomAgent, AgentConfig};
+    /// use std::path::PathBuf;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = AgentConfig::producer(PathBuf::from("state.db"));
+    /// let agent = CleanroomAgent::new(config)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[instrument(skip_all)]
     pub fn new(config: AgentConfig) -> Result<Self, cleanroom_db::DbError> {
         let db = Database::open(&config.db_path)?;
@@ -189,6 +354,18 @@ impl CleanroomAgent {
     }
 
     /// Build a task-specific prompt with context, few-shot examples, and orchestration.
+    ///
+    /// Constructs a prompt for LLM interaction by combining:
+    /// - The task instruction
+    /// - Context items from dependency tasks
+    /// - Working set context
+    /// - Relevant few-shot examples from the database
+    ///
+    /// # Arguments
+    /// * `task_instruction` - Instructions for the specific task
+    /// * `task_type` - Optional task type for example selection
+    /// * `dependency_context` - Context from dependent task results
+    /// * `working_set` - Current working set of context items
     pub fn build_task_prompt(
         &self,
         task_instruction: &str,
@@ -200,6 +377,16 @@ impl CleanroomAgent {
     }
 
     /// Record a successful task for future few-shot examples.
+    ///
+    /// After a task completes successfully, call this to add it to the
+    /// few-shot example pool for future task reference.
+    ///
+    /// # Arguments
+    /// * `task_type` - Type of the completed task
+    /// * `language` - Optional language context
+    /// * `input` - Task input JSON
+    /// * `output` - Task output JSON
+    /// * `tool_trace` - Sequence of tools used during task execution
     pub fn record_example(
         &mut self,
         task_type: &cleanroom_db::TaskType,
@@ -212,11 +399,42 @@ impl CleanroomAgent {
     }
 
     /// Reload few-shot examples from the database.
+    ///
+    /// Re-reads completed tasks from the database to update the
+    /// few-shot example pool. Useful after long-running operations
+    /// where new successful examples may have been recorded.
     pub fn reload_few_shot(&mut self) {
         self.few_shot = load_from_database(&self.db, 100);
     }
 
     /// Run the agent in the specified mode.
+    ///
+    /// Executes the agent according to the provided [`RunMode`]:
+    /// - [`RunMode::Produce`]: Analyze repository and generate S.DEF
+    /// - [`RunMode::Consume`]: Read S.DEF and generate code
+    /// - [`RunMode::Resume`]: Restore workflow from checkpoint
+    ///
+    /// # Arguments
+    /// * `mode` - The execution mode and its parameters
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cleanroom_agent::{CleanroomAgent, AgentConfig, RunMode};
+    /// use std::path::PathBuf;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = AgentConfig::producer(PathBuf::from("state.db"));
+    /// let agent = CleanroomAgent::new(config)?;
+    ///
+    /// agent.run(RunMode::Produce {
+    ///     repo_path: PathBuf::from("./my-repo"),
+    ///     output_path: PathBuf::from("./output"),
+    ///     project_name: "my-project".to_string(),
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[instrument(skip(self))]
     pub async fn run(&self, mode: RunMode) -> anyhow::Result<()> {
         match mode {

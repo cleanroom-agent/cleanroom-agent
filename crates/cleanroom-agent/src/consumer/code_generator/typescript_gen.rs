@@ -1,9 +1,35 @@
 //! TypeScript code generator.
+//!
+//! Transforms S.DEF (Software Definition Exchange Format) entities into
+//! TypeScript/JavaScript source code, including interfaces, classes, and functions.
+//!
+//! # Generated Code
+//!
+//! - Data models become `export interface` and `export class`
+//! - Interfaces become `export interface`
+//! - Functions become `export function`
+//! - Field names use camelCase
+//! - Types are mapped from S.DEF types to TypeScript types
+//!
+//! # Type Mapping
+//!
+//! | S.DEF Type | TypeScript Type |
+//! |------------|----------------|
+//! | UUID       | string |
+//! | timestamp  | Date |
+//! | string     | string |
+//! | integer    | number |
+//! | boolean    | boolean |
+//! | json       | any |
 
 use super::{CodeGenerator, GeneratedCode};
 use sdef_core::{DataModel, InterfaceContract, ClassContract, FunctionSpec};
 
 /// TypeScript language code generator.
+///
+/// Implements the [`CodeGenerator`] trait to produce TypeScript source code
+/// from S.DEF entities. Generates interfaces and classes with proper JSDoc
+/// comments and type annotations.
 pub struct TypeScriptGenerator;
 
 impl CodeGenerator for TypeScriptGenerator {

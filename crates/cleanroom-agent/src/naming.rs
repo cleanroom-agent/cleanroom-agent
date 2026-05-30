@@ -1,4 +1,35 @@
 //! Naming Service — deterministic symbol naming with namespace support.
+//!
+//! This module provides utilities for converting between different naming
+//! conventions (PascalCase, camelCase, snake_case, UPPER_SNAKE_CASE) and
+//! managing namespaces for fully-qualified symbol names.
+//!
+//! # Supported Languages
+//!
+//! Each language has its preferred naming convention:
+//!
+//! | Language     | Style      |
+//! |--------------|------------|
+//! | Rust         | snake_case |
+//! | Python       | snake_case |
+//! | TypeScript   | camelCase  |
+//! | JavaScript   | camelCase  |
+//! | Java         | PascalCase |
+//! | Go           | PascalCase |
+//! | C#           | PascalCase |
+//!
+//! # Usage
+//!
+//! ```no_run
+//! use cleanroom_agent::naming::{DeterministicNames, Language, NameStyle};
+//!
+//! let names = DeterministicNames::new();
+//! let rust_name = names.convert_for_language("UserName", Language::Rust);
+//! assert_eq!(rust_name, "user_name");
+//!
+//! let ts_name = names.convert_for_language("user_name", Language::TypeScript);
+//! assert_eq!(ts_name, "userName");
+//! ```
 
 use std::collections::HashMap;
 

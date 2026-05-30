@@ -1,4 +1,36 @@
 //! Producer pipeline — full code analysis flow: scan → partition → analyze → S.DEF → persist.
+//!
+//! This module implements the complete producer pipeline that transforms
+//! a source code repository into a S.DEF (Software Definition Exchange Format) document.
+//!
+//! # Pipeline Stages
+//!
+//! 1. **Repository Scanning**: Discovers all source files via [`scan_repository`]
+//! 2. **Module Partitioning**: Groups files into logical modules via [`partition_files`]
+//! 3. **Dependency Analysis**: Builds dependency graph via [`DependencyGraph`]
+//! 4. **IR to S.DEF Mapping**: Converts code entities to S.DEF via [`SdefMapper`]
+//! 5. **Persistence**: Stores results in the database
+//!
+//! # Usage
+//!
+//! ```no_run
+//! use cleanroom_agent::producer_pipeline::run_analysis_pipeline;
+//! use cleanroom_db::Database;
+//! use std::path::PathBuf;
+//! use std::sync::Arc;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let db = Arc::new(Database::open(&PathBuf::from("state.db"))?);
+//! let result = run_analysis_pipeline(
+//!     db,
+//!     &PathBuf::from("./my-repo"),
+//!     "my-project",
+//!     "0.1.0",
+//!     Some("Project description".to_string()),
+//! ).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::path::Path;
 use std::sync::Arc;
@@ -11,26 +43,34 @@ use cleanroom_db::{Database, DbError};
 use sdef_core::SoftwareDefinition;
 use tracing::{info, instrument};
 
-/// Result of a full pipeline run.
+/// Result of a full producer pipeline run.
+///
+/// Contains statistics and outputs from the complete analysis pipeline,
+/// including the generated S.DEF document and dependency analysis results.
 #[derive(Debug)]
 pub struct PipelineResult {
-    /// Files discovered.
+    /// Total number of source files discovered
     pub file_count: usize,
-    /// Modules identified.
+    /// Number of logical modules identified
     pub module_count: usize,
-    /// Languages found.
+    /// Programming languages detected in the repository
     pub languages: Vec<String>,
-    /// The generated SoftwareDefinition.
+    /// The generated SoftwareDefinition (S.DEF) document
     pub sdef: SoftwareDefinition,
-    /// Dependency graph details.
+    /// Dependency graph analysis summary
     pub dependency_info: DepInfo,
 }
 
-/// Dependency analysis info.
+/// Dependency analysis summary from the pipeline.
+///
+/// Contains basic statistics about the dependency graph built during analysis.
 #[derive(Debug)]
 pub struct DepInfo {
+    /// Number of nodes in the dependency graph
     pub node_count: usize,
+    /// Number of edges in the dependency graph
     pub edge_count: usize,
+    /// Number of dependency cycles detected
     pub cycle_count: usize,
 }
 

@@ -2,6 +2,25 @@
 //!
 //! Provides three-way verification between S.DEF files, database state,
 //! and generated code via SHA-256 fingerprints, plus automated fix strategies.
+//!
+//! # Three-Way Consistency
+//!
+//! The consistency service tracks the state of entities across three sources:
+//! 1. **S.DEF**: The software definition document
+//! 2. **Database**: SQLite storage of S.DEF entities
+//! 3. **Code**: Generated source code files
+//!
+//! Each entity has SHA-256 hashes stored for each source, and inconsistencies
+//! are detected when hashes differ.
+//!
+//! # Fix Strategies
+//!
+//! When an inconsistency is detected, several fix strategies are available:
+//! - [`FixStrategy::SyncCodeToSdef`]: Accept code changes as truth
+//! - [`FixStrategy::RegenerateCode`]: Create task to regenerate code from S.DEF
+//! - [`FixStrategy::SyncDbToSdef`]: Export DB state to S.DEF file
+//! - [`FixStrategy::SyncSdefToDb`]: Import S.DEF file into database
+//! - [`FixStrategy::AcceptExternal`]: Mark external changes as accepted
 
 use sha2::{Sha256, Digest};
 use std::sync::Arc;
@@ -10,34 +29,52 @@ use cleanroom_db::{Database, DbError};
 use cleanroom_db::repositories::{Fingerprint, FingerprintRepository, Task, TaskRepository, TaskStatus, TaskType};
 
 /// Consistency check level.
+///
+/// Determines the depth of verification performed when checking consistency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckLevel {
-    /// Fast check — only compare hashes.
+    /// Fast check — only compare hashes without deep validation
     Fast,
-    /// Full check — verify structure.
+    /// Full check — verify structure matches between sources
     Full,
-    /// Deep check — validate semantics.
+    /// Deep check — validate semantics and cross-reference integrity
     Deep,
 }
 
-/// Fix strategy for inconsistencies.
+/// Fix strategy for resolving inconsistencies.
+///
+/// Defines how the consistency service should resolve discrepancies
+/// discovered between S.DEF, database, and code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixStrategy {
-    /// Sync code to S.DEF — acknowledge code changes.
+    /// Sync code to S.DEF — acknowledge code changes as the new truth
+    ///
+    /// Updates S.DEF and database hashes to match the current code state.
     SyncCodeToSdef,
-    /// Regenerate code from S.DEF — create GENERATE_CODE task.
+    /// Regenerate code from S.DEF — create GENERATE_CODE task
+    ///
+    /// Queues a task to regenerate code from the S.DEF source of truth.
     RegenerateCode,
-    /// Sync DB to S.DEF — export database to S.DEF file.
+    /// Sync DB to S.DEF — export database state to S.DEF file
+    ///
+    /// Writes current database state to S.DEF file.
     SyncDbToSdef,
-    /// Sync S.DEF to DB — import S.DEF file into database.
+    /// Sync S.DEF to DB — import S.DEF file into database
+    ///
+    /// Reads S.DEF file and updates database to match.
     SyncSdefToDb,
-    /// Accept external changes — just update fingerprint timestamps.
+    /// Accept external changes — just update fingerprint timestamps
+    ///
+    /// Marks the entity as consistent with current external state.
     AcceptExternal,
 }
 
 /// Consistency service for three-way verification.
+///
+/// Monitors and maintains consistency between S.DEF documents,
+/// database state, and generated code using SHA-256 fingerprints.
 pub struct ConsistencyService {
-    /// Database connection.
+    /// Database connection for reading fingerprints and state
     db: Arc<Database>,
 }
 

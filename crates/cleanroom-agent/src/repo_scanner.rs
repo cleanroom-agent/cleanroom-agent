@@ -1,4 +1,29 @@
 //! Repository scanner — traverses file trees and discovers source files.
+//!
+//! This module provides functionality for scanning directories and discovering
+//! source code files. It supports filtering by file type, excluding common
+//! directories like node_modules and target, and detecting programming languages
+//! based on file extensions.
+//!
+//! # Supported Languages
+//!
+//! Files are detected based on extension mapping:
+//! - `.rs` → Rust
+//! - `.ts`, `.tsx` → TypeScript
+//! - `.js`, `.jsx`, `.mjs`, `.cjs` → JavaScript
+//! - `.py`, `.pyi` → Python
+//! - `.go` → Go
+//! - `.java` → Java
+//! - `.c`, `.h` → C
+//! - `.cpp`, `.cc`, `.cxx`, `.hpp` → C++
+//!
+//! # Excluded Patterns
+//!
+//! By default, the following are excluded:
+//! - `node_modules/`, `target/`, `.git/`, `vendor/`
+//! - `*.lock` files
+//! - `.siefignore` for custom exclusions
+//! - Hidden files (starting with `.`)
 
 use std::path::{Path, PathBuf};
 use tracing::{info, instrument};
