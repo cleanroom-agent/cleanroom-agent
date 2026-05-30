@@ -119,9 +119,29 @@ fn test_fingerprint_repository_crud() {
 #[test]
 fn test_fix_strategies_apply() {
     let db = setup_db();
-    let service = ConsistencyService::new(db);
+    let repo = FingerprintRepository::from_arc(db.connection_arc());
 
-    // Fix with each strategy - should not error
+    // Insert a fingerprint row — required by SyncCodeToSdef and SyncSdefToDb
+    // which call fp_repo.get() and need the row to exist first.
+    repo.upsert(&Fingerprint {
+        entity_uri: "sdef://test-doc/entity/User".to_string(),
+        document_name: "test-doc".to_string(),
+        entity_type: "data_model".to_string(),
+        sdef_hash: Some("abc".to_string()),
+        db_hash: Some("def".to_string()),
+        code_hash: Some("abc".to_string()),
+        code_path: Some("src/user.rs".to_string()),
+        last_checked_at: String::new(),
+        last_consistent_at: None,
+    }).expect("Setup fingerprint should succeed");
+
+    // Create S.DEF file — required by SyncSdefToDb
+    std::fs::create_dir_all("sdef-output").ok();
+    std::fs::write("sdef-output/test-doc.sdef.json",
+        r#"{"sdef_version":"test","name":"test-doc","version":"1.0","description":"test","data_models":[{"entity":"User","status":"active"}]}"#
+    ).expect("Write S.DEF file should succeed");
+
+    let service = ConsistencyService::new(db);
     let inc = Inconsistency {
         entity_uri: "sdef://test-doc/entity/User".to_string(),
         sdef_hash: Some("abc".to_string()),
