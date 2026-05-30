@@ -434,6 +434,9 @@ impl CleanroomMcpServer {
             "list_compat_layers" => self.handle_list_compat_layers(args_value),
             "get_compat_layer_detail" => self.handle_get_compat_layer(args_value),
             "ignore_compat_layer" => self.handle_ignore_compat_layer(args_value),
+            // Evaluation
+            "run_evaluation" => self.handle_run_evaluation(args_value),
+            "get_evaluation_report" => self.handle_get_evaluation_report(args_value),
             _ => Err(format!("Unknown tool: {}", name)),
         }
     }
@@ -1532,6 +1535,87 @@ impl CleanroomMcpServer {
             },
         }))
     }
+
+    // ─── Evaluation Tools ──────────────────────────────────────────
+
+    /// Run an evaluation against benchmark projects.
+    fn handle_run_evaluation(&self, args: Value) -> Result<Value, String> {
+        use cleanroom_agent::evaluation::{EvaluationRunner, EvalConfig, BenchmarkSuite};
+        use tools::eval_tools::RunEvalParams;
+
+        let p: RunEvalParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let project_name = p.project_name;
+        let output_dir = p.output_dir;
+
+        let rt = tokio::runtime::Handle::try_current()
+            .map_err(|e| format!("No tokio runtime available: {}", e))?;
+
+        let db = self.db.clone();
+
+        rt.block_on(async move {
+            let config = EvalConfig {
+                output_dir: std::path::PathBuf::from(output_dir.as_deref().unwrap_or("./eval-reports")),
+                ..EvalConfig::default()
+            };
+
+            let runner = EvaluationRunner::new(config, db.clone());
+
+            // Use builtin suite or custom project name
+            let mut suite = BenchmarkSuite::builtin();
+            if let Some(ref name) = project_name {
+                suite.projects.retain(|proj| proj.name == *name);
+            }
+
+            let report = runner.run(&suite).await
+                .map_err(|e| format!("Evaluation failed: {}", e))?;
+
+            Ok(serde_json::to_value(&report).unwrap_or(json!({
+                "error": "Failed to serialize report"
+            })))
+        })
+    }
+
+    /// Retrieve historical evaluation reports.
+    fn handle_get_evaluation_report(&self, args: Value) -> Result<Value, String> {
+        use cleanroom_db::EvaluationRepository;
+        use tools::eval_tools::GetEvalReportParams;
+
+        let p: GetEvalReportParams = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let project_name = p.project_name;
+        let limit = p.limit;
+
+        let repo = EvaluationRepository::new(self.db.connection_arc());
+
+        if let Some(ref project) = project_name {
+            let record_limit = limit.unwrap_or(10).min(100);
+            let records = repo.list_by_project(project, record_limit)
+                .map_err(|e| format!("Failed to list evaluation records: {}", e))?;
+
+            Ok(serde_json::to_value(&records).unwrap_or(json!([])))
+        } else {
+            // List all projects with latest summaries
+            let mut results = Vec::new();
+            let conn = self.db.connection();
+            let mut stmt = conn
+                .prepare("SELECT DISTINCT project_name FROM evaluation_history ORDER BY project_name")
+                .map_err(|e| e.to_string())?;
+            let projects: Vec<String> = stmt
+                .query_map([], |row| row.get(0))
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            drop(stmt);
+            drop(conn);
+
+            for proj in &projects {
+                let summary = repo.get_summary(proj)
+                    .map_err(|e| format!("Failed to get summary: {}", e))?;
+                results.push(summary);
+            }
+
+            Ok(serde_json::to_value(&results).unwrap_or(json!([])))
+        }
+    }
 }
 
 // ============ Tool Definitions (i18n) ============
@@ -1636,6 +1720,10 @@ fn all_tools() -> Vec<Tool> {
         make_tool::<ListCompatLayersParams>("list_compat_layers", "mcp.list_compat_layers", true),
         make_tool::<GetCompatLayerParams>("get_compat_layer_detail", "mcp.get_compat_layer_detail", true),
         make_tool::<IgnoreCompatLayerParams>("ignore_compat_layer", "mcp.ignore_compat_layer", false),
+
+        // Evaluation
+        make_tool::<tools::eval_tools::RunEvalParams>("run_evaluation", "mcp.run_evaluation", false),
+        make_tool::<tools::eval_tools::GetEvalReportParams>("get_evaluation_report", "mcp.get_evaluation_report", true),
     ]
 }
 

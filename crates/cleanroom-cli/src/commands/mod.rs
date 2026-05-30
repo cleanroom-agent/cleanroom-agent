@@ -321,6 +321,33 @@ pub enum Commands {
         #[arg(long, default_value = "false")]
         apply: bool,
     },
+
+    /// Run evaluation against benchmark projects.
+    ///
+    /// Evaluates the quality of the Cleanroom Agent's analysis and code generation
+    /// by running against known benchmark projects. Produces a quality report with
+    /// coverage, accuracy, fidelity, and operational metrics.
+    ///
+    /// # Example
+    ///
+    /// ```bash
+    /// # Run all built-in benchmarks
+    /// cleanroom evaluate
+    ///
+    /// # Run a specific benchmark
+    /// cleanroom evaluate --benchmark redis
+    ///
+    /// # Output report to a file
+    /// cleanroom evaluate --output ./report.json
+    /// ```
+    Evaluate {
+        /// Specific benchmark project to evaluate (omit for all built-in)
+        #[arg(long)]
+        benchmark: Option<String>,
+        /// Output path for the evaluation report (default: stdout)
+        #[arg(long)]
+        output: Option<String>,
+    },
 }
 
 /// Dispatches a CLI command to its corresponding handler.
@@ -364,6 +391,9 @@ pub fn run(command: Commands, db_path: &str) -> Result<()> {
         }
         Commands::Upgrade { old_version, new_version, repo, document, apply } => {
             upgrade_command(&old_version, &new_version, &repo, document.as_deref(), apply, db_path)
+        }
+        Commands::Evaluate { benchmark, output } => {
+            evaluate_command(benchmark.as_deref(), output.as_deref(), db_path)
         }
     }
 }
@@ -1046,5 +1076,84 @@ fn upgrade_command(
         println!("{}", tr_global!("cli.upgrade_applied", old_version, new_version));
     }
 
+    Ok(())
+}
+
+/// Handler for the `evaluate` command.
+///
+/// Runs the evaluation suite against built-in benchmark projects
+/// and outputs a quality report.
+fn evaluate_command(
+    benchmark: Option<&str>,
+    output: Option<&str>,
+    db_path: &str,
+) -> Result<()> {
+    use cleanroom_agent::evaluation::{EvaluationRunner, EvalConfig, BenchmarkSuite};
+    use cleanroom_db::Database;
+
+    let db = Arc::new(
+        Database::open(std::path::Path::new(db_path))
+            .context("Failed to open database")?,
+    );
+
+    let output_dir = output
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("./eval-reports"));
+
+    std::fs::create_dir_all(&output_dir)
+        .context("Failed to create output directory")?;
+
+    let config = EvalConfig {
+        output_dir: output_dir.clone(),
+        ..EvalConfig::default()
+    };
+
+    let runner = EvaluationRunner::new(config, db.clone());
+
+    let mut suite = BenchmarkSuite::builtin();
+    if let Some(name) = benchmark {
+        suite.projects.retain(|p| p.name == name);
+        if suite.projects.is_empty() {
+            anyhow::bail!(
+                "Unknown benchmark: '{}'. Available: redis, express, hugo",
+                name
+            );
+        }
+    }
+
+    println!("Running evaluation on {} benchmark project(s)...", suite.projects.len());
+
+    let rt = tokio::runtime::Runtime::new()
+        .context("Failed to create tokio runtime")?;
+
+    let report = rt.block_on(runner.run(&suite))
+        .context("Evaluation failed")?;
+
+    // Write report to output file
+    let report_path = output_dir.join(format!("evaluation-{}.json", &report.run_id[..8]));
+    let report_json = serde_json::to_string_pretty(&report)
+        .context("Failed to serialize report")?;
+    std::fs::write(&report_path, &report_json)
+        .context("Failed to write report file")?;
+
+    // Print summary
+    if let Some(ref summary) = report.summary {
+        println!(
+            "Evaluation: {} projects | Fidelity: {:.1}% | Coverage: {:.1}% | Compile: {:.1}%",
+            summary.projects_evaluated,
+            summary.overall_fidelity * 100.0,
+            summary.overall_coverage * 100.0,
+            summary.overall_compile_rate * 100.0,
+        );
+
+        if !summary.degraded_projects.is_empty() {
+            println!(
+                "WARNING: Degraded projects: {}",
+                summary.degraded_projects.join(", ")
+            );
+        }
+    }
+
+    println!("Report saved to: {}", report_path.display());
     Ok(())
 }

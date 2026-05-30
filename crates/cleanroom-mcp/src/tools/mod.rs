@@ -25,3 +25,4 @@ pub mod import_export_tools;
 pub mod lsp_tools;
 pub mod consistency_tools;
 pub mod compat_tools;
+pub mod eval_tools;

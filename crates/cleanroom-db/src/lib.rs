@@ -18,3 +18,6 @@ pub use repositories::{Fingerprint, FingerprintRepository};
 pub use repositories::SdefRepository;
 pub use repositories::{AgentMessage, AgentMessageRepository, MessageType};
 pub use repositories::{TypeCacheEntry, TypeCacheRepository};
+pub use repositories::{
+    EvaluationRecord, EvaluationRepository, EvaluationSummary, EvaluationTrend,
+};

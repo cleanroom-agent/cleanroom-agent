@@ -9,6 +9,7 @@ pub mod checkpoint_repository;
 pub mod audit_repository;
 pub mod message_repository;
 pub mod type_cache_repository;
+pub mod evaluation_repository;
 
 pub use task_repository::{Task, TaskRepository, TaskStatus, TaskType};
 pub use shard_repository::{Shard, ShardRepository, ShardStatus};
@@ -22,3 +23,6 @@ pub use checkpoint_repository::{Checkpoint, CheckpointRepository};
 pub use audit_repository::{AuditEntry, AuditRepository};
 pub use message_repository::{AgentMessage, AgentMessageRepository, MessageType};
 pub use type_cache_repository::{TypeCacheEntry, TypeCacheRepository};
+pub use evaluation_repository::{
+    EvaluationRecord, EvaluationRepository, EvaluationSummary, EvaluationTrend,
+};

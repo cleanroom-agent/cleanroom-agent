@@ -50,3 +50,5 @@ sdef-output/
 
 # generated code
 generated/
+# Downloaded benchmark source codes
+tests/fixtures/benchmarks/

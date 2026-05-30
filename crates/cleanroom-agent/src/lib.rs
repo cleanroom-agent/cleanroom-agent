@@ -85,6 +85,9 @@ pub mod lsp_analysis;
 pub mod collaboration;
 pub mod reviewer;
 
+// Evaluation & quality control (docs/14)
+pub mod evaluation;
+
 pub use agent::{CleanroomAgent, AgentConfig, RunMode};
 pub use naming::{DeterministicNames, Language, NameStyle, NamespaceMode};
 pub use name_resolution::{NameResolutionService, ResolvedName};
@@ -118,4 +121,12 @@ pub use reviewer::{ReviewerAgent, ReviewerConfig, ReviewReport, reviewer_loop};
 pub use lsp_analysis::{
     analyze_file_with_lsp_fallback, lookup_cached_type, has_cached_types,
     EnhancedFileAnalysis, EnrichedSymbol, AnalysisSource, LspAnalysisOptions,
+};
+pub use evaluation::{
+    BenchmarkProject, BenchmarkSuite, ExpectedStats,
+    EvaluationRunner, EvalConfig, ContinuousEval,
+    EvaluationReport, ProjectEvalResult, EvaluationSummaryReport,
+    AnalysisQualityReport, CoverageMetrics, AccuracyMetrics, EfficiencyMetrics,
+    GenerationQualityReport, RoundtripFidelity, CodeQualityMetrics,
+    OperationalMetrics,
 };
